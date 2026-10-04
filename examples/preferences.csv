@@ -1,0 +1,41 @@
+name,hours,pref1,pref2,pref3,pref4,pref5,pref6,pref7,pref8,pref9,pref10,pref11,pref12,pref13,pref14,pref15,pref16,pref17,pref18,pref19,pref20,pref21
+TA01,5,Tue 12:00,Fri 14:30,Thu 14:00,Tue 17:00,Mon 14:00,Tue 14:00,Wed 13:30,Fri 12:30,Mon 14:30,Wed 14:30,Thu 13:00,Wed 14:00,Thu 15:00
+TA02,5,Fri 14:00,Wed 15:00,Wed 14:00,Tue 15:30,Wed 15:30,Tue 14:30,Wed 14:30,Tue 12:00,Mon 15:00,Mon 15:30,Thu 12:00,Thu 13:00,Wed 12:00
+TA03,1,Wed 17:30,Mon 14:30
+TA04,3,Thu 18:00,Thu 15:00,Thu 16:30,Fri 12:00,Wed 13:30,Tue 14:30,Wed 18:00
+TA05,7,Wed 13:30,Mon 18:00,Mon 17:00,Wed 18:00,Thu 15:00,Tue 15:30,Tue 13:00,Wed 13:00,Wed 16:30,Thu 13:00,Fri 15:00,Tue 14:00,Tue 13:30,Mon 14:00,Wed 15:30,Tue 14:30,Mon 15:00,Mon 12:30
+TA06,5,Mon 14:30,Tue 12:30,Thu 14:30,Tue 14:30,Thu 15:00,Mon 14:00,Mon 15:30,Thu 12:00,Mon 13:00,Wed 15:00,Fri 12:30,Wed 14:00,Thu 12:30,Mon 13:30
+TA07,3,Mon 16:00,Thu 15:00,Mon 14:30,Mon 14:00,Thu 14:30,Mon 15:30,Wed 15:00,Tue 13:00,Fri 14:30,Thu 12:30,Wed 13:00
+TA08,7,Fri 13:00,Mon 13:00,Tue 17:00,Mon 14:30,Tue 13:30,Tue 13:00,Wed 17:30,Tue 15:30,Mon 17:00,Wed 14:30,Mon 13:30,Mon 15:30,Fri 16:00,Tue 14:00
+TA09,3,Thu 17:00,Wed 12:00,Thu 16:30,Wed 14:00,Thu 12:00,Mon 16:00,Thu 13:30,Thu 14:00
+TA10,2,Thu 15:00,Tue 14:00,Tue 12:00,Wed 15:00,Tue 17:00
+TA11,2,Mon 12:30,Wed 17:30,Thu 17:00,Thu 15:30,Thu 18:00
+TA12,3,Tue 14:30,Thu 15:00,Tue 12:00,Wed 14:00,Mon 12:30,Thu 13:00,Tue 14:00,Mon 13:30,Tue 13:00,Mon 18:00,Fri 14:00
+TA13,2,Wed 15:00,Wed 17:30,Wed 14:30,Thu 17:00,Thu 15:30,Mon 14:30
+TA14,1,Tue 15:00,Tue 16:30,Wed 16:30,Mon 12:00
+TA15,3,Thu 12:00,Mon 15:30,Tue 12:30,Wed 12:00,Thu 13:00,Wed 16:30,Thu 16:00
+TA16,2,Tue 15:30,Thu 12:30,Tue 16:30,Wed 17:00
+TA17,3,Mon 15:30,Mon 13:30,Thu 13:00,Wed 12:00,Thu 16:30,Thu 18:00
+TA18,1,Thu 16:00,Wed 13:00
+TA19,1,Thu 15:00,Mon 13:30,Thu 14:30,Fri 14:30
+TA20,3,Mon 16:00,Fri 18:00,Wed 15:30,Mon 14:00,Thu 13:00,Fri 15:00,Tue 15:30,Wed 17:30,Tue 14:00
+TA21,7,Mon 12:30,Thu 13:30,Fri 15:00,Wed 16:00,Wed 14:30,Mon 15:30,Wed 15:00,Mon 17:00,Tue 13:30,Thu 12:30,Mon 15:00,Wed 12:30,Fri 12:00,Wed 16:30,Mon 13:00,Thu 18:00,Thu 15:00
+TA22,1,Thu 15:30,Mon 15:00
+TA23,3,Thu 14:30,Wed 15:30,Mon 14:30,Mon 15:30,Thu 15:30,Mon 13:00,Tue 13:00,Tue 14:00,Tue 15:00,Tue 17:00
+TA24,5,Thu 15:00,Fri 14:00,Wed 14:30,Tue 18:00,Wed 15:30,Tue 15:30,Tue 15:00,Thu 16:00,Mon 15:00,Tue 14:00
+TA25,3,Mon 12:00,Mon 15:30,Tue 14:30,Thu 14:30,Thu 13:00,Tue 15:00,Wed 15:30,Mon 13:00
+TA26,2,Mon 15:00,Wed 15:00,Tue 15:00,Fri 16:00,Mon 14:30
+TA27,7,Wed 12:30,Tue 12:00,Mon 13:30,Mon 16:30,Wed 14:00,Mon 14:00,Tue 16:30,Tue 15:00,Wed 12:00,Mon 15:00,Thu 18:00,Wed 14:30,Thu 15:30,Fri 15:00,Tue 14:30
+TA28,7,Mon 14:30,Wed 13:30,Mon 13:00,Tue 15:00,Thu 13:00,Mon 16:00,Mon 17:00,Wed 15:00,Thu 15:00,Fri 17:00,Mon 14:00,Thu 14:30,Tue 12:30,Tue 13:00,Tue 16:30,Mon 15:00,Wed 15:30,Tue 14:30,Fri 13:30,Thu 15:30,Thu 13:30
+TA29,3,Tue 16:00,Tue 15:00,Fri 15:00,Tue 12:30,Thu 14:00,Tue 17:00,Tue 14:30
+TA30,1,Thu 14:30,Thu 15:30
+TA31,1,Thu 17:00,Tue 17:30
+TA32,1,Mon 14:30,Tue 15:30,Mon 18:00
+TA33,5,Fri 18:00,Thu 14:00,Wed 15:00,Mon 14:00,Tue 17:30,Tue 14:30,Thu 15:00,Mon 14:30,Wed 14:30,Wed 12:30
+TA34,1,Wed 15:30,Tue 15:30,Wed 13:30,Thu 12:30,Thu 17:00
+TA35,7,Fri 18:00,Wed 15:30,Thu 15:30,Wed 13:30,Fri 13:00,Mon 12:00,Thu 12:00,Thu 13:00,Tue 13:30,Tue 13:00,Wed 13:00,Thu 16:00,Wed 14:30,Mon 14:30,Tue 14:30,Tue 12:00,Thu 13:30,Tue 16:30,Thu 14:30,Tue 17:30,Fri 13:30
+TA36,3,Mon 18:00,Mon 13:00,Mon 12:30,Thu 15:00,Tue 14:30,Mon 15:30
+TA37,2,Thu 15:30,Tue 17:30,Tue 14:30,Tue 15:00,Wed 14:00
+TA38,3,Wed 14:30,Wed 18:00,Thu 14:30,Thu 13:30,Fri 16:00,Thu 12:30
+TA39,1,Tue 13:30,Thu 17:00,Tue 16:30
+TA40,3,Thu 15:00,Fri 14:30,Wed 14:30,Mon 17:30,Thu 15:30,Mon 12:30,Thu 16:00,Thu 12:00,Tue 13:30
