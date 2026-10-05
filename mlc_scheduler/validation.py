@@ -47,7 +47,7 @@ def validate(
             errors.append(f"{p.name}: the same slot is listed more than once")
         required = math.ceil(config.min_list_factor * p.hours)
         if not p.preferences:
-            warnings.append(f"{p.name}: ranked no slots, so they will get whatever slots are left")
+            pass  # reported once, below
         elif len(p.preferences) < required:
             errors.append(
                 f"{p.name}: ranked {len(p.preferences)} slots but must rank at least "
@@ -63,6 +63,11 @@ def validate(
                 f"{p.name}: only {fits} hours fit around their unavailable times "
                 f"and the daily / in-a-row limits, but they need {p.hours}"
             )
+
+    no_list = [p.name for p in participants if not p.preferences]
+    if no_list:
+        warnings.append(f"{len(no_list)} ranked no slots, so they will get whatever slots "
+                        f"are left: {', '.join(no_list)}")
 
     total = sum(p.hours for p in participants)
     if total > schedule.capacity:

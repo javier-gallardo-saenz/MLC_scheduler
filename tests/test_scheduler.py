@@ -266,7 +266,7 @@ def test_roster_drives_hours_and_includes_non_submitters(tmp_path):
 
     # no list at all is only a warning; they fill the leftovers
     errors, warnings = validate(sched, people, Config(min_list_factor=1))
-    assert not errors and any("Bo: ranked no slots" in w for w in warnings)
+    assert not errors and any("2 ranked no slots" in w and "Bo, Cy" in w for w in warnings)
     res = run(sched, people, Config(seed=0))
     assert res.assignment["Ana Ruiz"] == [S("Mon 12:00")]
 
