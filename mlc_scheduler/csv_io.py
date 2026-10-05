@@ -90,6 +90,9 @@ def parse_unavailable(text: str, schedule: Schedule) -> set[Slot]:
     return blocked
 
 
+META_COLUMNS = {"submitted", "timestamp", "email"}  # ignored when reading preferences
+
+
 def read_participants(src, schedule: Schedule) -> tuple[list[Participant], list[str]]:
     """Returns (participants, errors). Rows with errors are still returned when possible."""
     df = _read(src)
@@ -97,7 +100,8 @@ def read_participants(src, schedule: Schedule) -> tuple[list[Participant], list[
     if "name" not in lower or "hours" not in lower:
         raise ValueError("preferences CSV needs 'name' and 'hours' columns")
     unavail_col = lower.get("unavailable")
-    pref_cols = [c for c in df.columns if c not in (lower["name"], lower["hours"], unavail_col)]
+    pref_cols = [c for c in df.columns
+                 if c not in (lower["name"], lower["hours"], unavail_col) and c.lower() not in META_COLUMNS]
 
     participants, errors = [], []
     for i, row in df.iterrows():
@@ -140,6 +144,15 @@ def read_grievances(src) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------- outputs
+
+
+def schedule_to_csv(schedule: Schedule) -> str:
+    """The schedule in the same grid format read_schedule() reads."""
+    rows = [
+        {"time": fmt_time(t), **{d: schedule.needed.get(Slot(d, t), 0) for d in schedule.days}}
+        for t in schedule.times
+    ]
+    return pd.DataFrame(rows, columns=["time", *schedule.days]).to_csv(index=False)
 
 
 def schedule_grid(schedule: Schedule, assignment: dict[str, list[Slot]]) -> pd.DataFrame:

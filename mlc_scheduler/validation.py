@@ -2,17 +2,32 @@
 from __future__ import annotations
 
 import math
+from functools import lru_cache
 
 from .models import Config, Participant, Schedule, Slot
 
 
-def max_hours(slots: list[Slot]) -> int:
-    """Most one-hour shifts that can be worked from `slots` without overlaps."""
-    count, last_end = 0, {}
-    for s in sorted(slots, key=lambda s: s.end):  # greedy interval scheduling
-        if s.start >= last_end.get(s.day, -1):
-            count, last_end[s.day] = count + 1, s.end
-    return count
+def max_hours(slots: list[Slot], per_day: int | None = None, in_a_row: int | None = None) -> int:
+    """Most hours that can be worked from `slots` without overlaps, within the limits."""
+    total = 0
+    for day in {s.day for s in slots}:
+        starts = sorted(s.start for s in slots if s.day == day)
+
+        @lru_cache(maxsize=None)
+        def best(free_at: int, run: int) -> int:
+            # most slots starting at/after `free_at`, given `run` back-to-back
+            # hours ending exactly at `free_at`
+            options = [0]
+            for start in starts:
+                if start < free_at:
+                    continue
+                new_run = run + 1 if start == free_at else 1
+                if in_a_row is None or new_run <= in_a_row:
+                    options.append(1 + best(start + 60, new_run))
+            return max(options)
+
+        total += min(best(-1, 0), per_day or len(starts))
+    return total
 
 
 def validate(
@@ -39,11 +54,12 @@ def validate(
         clash = [s.label for s in p.preferences if s in p.unavailable]
         if clash:
             errors.append(f"{p.name}: ranked slots also marked unavailable: {', '.join(clash)}")
-        fits = max_hours([s for s in schedule.slots if s not in p.unavailable])
+        fits = max_hours([s for s in schedule.slots if s not in p.unavailable],
+                         config.max_hours_per_day, config.max_in_a_row)
         if fits < p.hours:
             errors.append(
-                f"{p.name}: only {fits} non-overlapping hours fit around their "
-                f"unavailable times, but they need {p.hours}"
+                f"{p.name}: only {fits} hours fit around their unavailable times "
+                f"and the daily / in-a-row limits, but they need {p.hours}"
             )
 
     total = sum(p.hours for p in participants)

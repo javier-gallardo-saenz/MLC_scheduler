@@ -77,6 +77,8 @@ class Config:
     weights: list[float] = field(default_factory=list)  # weighted mode only
     rank_exponent: float = 1.0  # cost of the k-th choice is k ** rank_exponent
     min_list_factor: float = 2.0  # each TA must rank >= factor * hours slots
+    max_hours_per_day: int | None = None  # None = no limit
+    max_in_a_row: int | None = None  # max back-to-back hours; None = no limit
     seed: int | None = None  # random tie-breaking; set for reproducible runs
     time_limit: int = 60  # seconds per solver stage
 

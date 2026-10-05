@@ -27,13 +27,16 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--weights", type=float, nargs="*", default=[], help="one weight per tier")
     ap.add_argument("--rank-exponent", type=float, default=1.0)
     ap.add_argument("--min-list-factor", type=float, default=2.0)
+    ap.add_argument("--max-per-day", type=int, default=None, help="max hours per day")
+    ap.add_argument("--max-in-a-row", type=int, default=None, help="max back-to-back hours")
     ap.add_argument("--seed", type=int, default=None)
     ap.add_argument("--out", default="results", help="output folder")
     args = ap.parse_args(argv)
 
     config = Config(mode=args.mode, tiers=args.tiers, weights=args.weights,
                     rank_exponent=args.rank_exponent,
-                    min_list_factor=args.min_list_factor, seed=args.seed)
+                    min_list_factor=args.min_list_factor, seed=args.seed,
+                    max_hours_per_day=args.max_per_day, max_in_a_row=args.max_in_a_row)
     schedule = csv_io.read_schedule(args.schedule)
     participants, errors = csv_io.read_participants(args.preferences, schedule)
     grievances = csv_io.read_grievances(args.grievances) if args.grievances else {}

@@ -188,5 +188,59 @@ def test_validation_of_unavailable():
     errors, _ = validate(sched, [a, b], Config(min_list_factor=0))
     text = "\n".join(errors)
     assert "A: ranked slots also marked unavailable: Mon 12:30" in text
-    assert "A: only 1 non-overlapping hours fit" in text
+    assert "A: only 1 hours fit around" in text
     assert "Mon 12:00 (1/2)" in text and "Mon 13:00 (1/1)" not in text
+
+
+def test_max_hours_per_day():
+    sched = make_schedule({f"Mon {h}:00": 1 for h in range(12, 16)} | {"Tue 12:00": 1, "Tue 13:00": 1})
+    a = P("A", 3, "Mon 12:00", "Mon 13:00", "Mon 14:00", "Mon 15:00", "Tue 12:00")
+    res = run(sched, [a], Config(seed=0, max_hours_per_day=2))
+    assert res.assignment["A"] == [S("Mon 12:00"), S("Mon 13:00"), S("Tue 12:00")]
+
+
+def test_max_in_a_row():
+    sched = make_schedule({t: 1 for t in ("Mon 12:00", "Mon 13:00", "Mon 13:30", "Mon 14:00", "Mon 14:30", "Mon 15:00")})
+    a = P("A", 3, "Mon 12:00", "Mon 13:00", "Mon 14:00", "Mon 15:00", "Mon 14:30", "Mon 13:30")
+    # ranks 1-2-3 (12, 13, 14) would be 3 in a row; best allowed is 12, 13, then 15 (rank 4)
+    res = run(sched, [a], Config(seed=0, max_in_a_row=2))
+    assert res.assignment["A"] == [S("Mon 12:00"), S("Mon 13:00"), S("Mon 15:00")]
+    assert run(sched, [a], Config(seed=0)).assignment["A"][2] == S("Mon 14:00")
+
+
+def test_limits_in_validation():
+    from mlc_scheduler.validation import max_hours
+    day = [S(f"Mon {h}:{m}") for h in range(12, 18) for m in ("00", "30")]  # 12:00 ... 17:30
+    assert max_hours(day) == 6
+    assert max_hours(day, in_a_row=2) == 5  # e.g. 12, 13, (break) 14:30, 15:30, (break) 17:00
+    assert max_hours(day, per_day=3) == 3
+    sched = make_schedule({s.label: 1 for s in day} | {"Tue 12:00": 1})
+    errors, _ = validate(sched, [P("A", 3, "Mon 12:00")], Config(min_list_factor=0, max_hours_per_day=1))
+    assert any("only 2 hours fit" in e for e in errors)
+
+
+def test_form_store(tmp_path):
+    from mlc_scheduler.storage import FormStore
+    store = FormStore(tmp_path)
+    assert store.schedule_path() is None and store.submissions() == []
+
+    sched = csv_io.read_schedule(io.StringIO("time,Mon,Tue\n12:00,2,1\n12:30,,1\n"))
+    store.open_form(csv_io.schedule_to_csv(sched), 1.5)
+    assert csv_io.read_schedule(store.schedule_path()).needed == sched.needed
+    assert store.settings()["min_list_factor"] == 1.5
+
+    store.save("Ana  Ruiz", 1, "Tue", ["Mon 12:00"])
+    store.save("Bo", 2, "", ["Tue 12:00", "Mon 12:00", "Tue 12:30"])
+    store.save("ana ruiz", 1, "", ["Tue 12:30", "Mon 12:00"])  # replaces the first one
+    assert [s["name"] for s in store.submissions()] == ["Bo", "ana ruiz"]
+    assert store.get("ANA RUIZ")["preferences"] == ["Tue 12:30", "Mon 12:00"]
+
+    # the export is a valid preferences file (the 'submitted' column is ignored)
+    people, errors = csv_io.read_participants(io.StringIO(store.to_csv()), sched)
+    assert not errors
+    assert [p.preferences for p in people] == [
+        [S("Tue 12:00"), S("Mon 12:00"), S("Tue 12:30")], [S("Tue 12:30"), S("Mon 12:00")]]
+
+    store.delete("Bo")
+    store.close_form()
+    assert [s["name"] for s in store.submissions()] == ["ana ruiz"] and store.schedule_path() is None

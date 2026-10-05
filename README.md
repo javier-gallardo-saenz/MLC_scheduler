@@ -16,8 +16,13 @@ pip install -r requirements.txt
 streamlit run app.py            # interactive app in the browser
 ```
 
-In the app, upload the three CSVs (or switch on the example data), choose the
-options in the sidebar, press **Build schedule**, and download the results.
+The app has two pages:
+
+* **Submit preferences**: the form TAs fill in (see below).
+* **Build schedule**: for the MLC. Load the schedule, open the form, and once
+  TAs have submitted, choose the options in the sidebar, press **Build
+  schedule** and download the results. Instead of using the form you can also
+  upload a preferences CSV, or switch on the example data to try things out.
 
 There is also a command-line version:
 
@@ -25,6 +30,25 @@ There is also a command-line version:
 python -m mlc_scheduler examples/schedule.csv examples/preferences.csv \
     --grievances examples/grievances.csv --mode tiered --tiers 6 4 --seed 1 --out results
 ```
+
+## Collecting preferences with the form
+
+1. On **Build schedule**, upload the MLC schedule and press **Open the form**.
+   The form offers the slots of that schedule and asks for the sidebar's minimum
+   list length.
+2. Send TAs the app's link. On **Submit preferences** each TA enters their name
+   and hours, the days and times they can't work (e.g. their classes), and then
+   picks slots one by one, favourite first. A timetable preview shows their
+   ranking, and the form won't submit until the list is long enough and doesn't
+   clash with their busy times. Submitting again under the same name (case and
+   spacing don't matter) replaces the earlier answers.
+3. Back on **Build schedule**, the submissions are used automatically (an
+   uploaded preferences file takes priority). You can view and delete
+   submissions, download them as a preferences CSV, and **Close the form**.
+
+Submissions are stored as plain files in `data/` (or the folder in the
+`MLC_DATA_DIR` environment variable). See [Sharing the app](#sharing-the-app)
+before hosting it.
 
 ## Input files
 
@@ -81,11 +105,16 @@ carried over unchanged.
 
 **Hard constraints:** each TA gets exactly their hours; no slot gets more TAs
 than it needs; no TA works two overlapping slots; no TA works a slot they marked
-unavailable.
+unavailable. Optionally:
+
+* **max hours per day**: no TA works more than this many hours in one day;
+* **max hours in a row**: no TA works more than this many *back-to-back* slots,
+  where each starts exactly when the previous one ends. 12:00, 13:00, 14:00 is
+  3 in a row, while 12:00, 13:00, 14:30 is 2 then a break (any gap counts).
 
 Before solving, the inputs are checked. A slot that is both ranked and
 unavailable is an error. So is a TA whose hours don't fit around their busy
-times, or a set of slots that too few TAs are free for.
+times and the limits above, or a set of slots that too few TAs are free for.
 
 **Cost of a slot for a TA:** `rank ** e`, where `rank` is its position in the
 TA's list (1 = favourite) and `e` is the *rank exponent* (default 1). A slot the
@@ -143,13 +172,18 @@ and weighted modes that is intended, not a tie.
 | option | default | meaning |
 |---|---|---|
 | minimum list length | `2` x hours | each TA must rank at least this many slots; `0` disables the check |
+| max hours per day | no limit | `--max-per-day` in the CLI |
+| max hours in a row | no limit | `--max-in-a-row` in the CLI |
 | rank exponent | `1` | fairness knob (see above) |
 | seed | `0` in the app | makes the random tie-break reproducible |
 
 ## Project layout
 
 ```
-app.py                     Streamlit front-end
+app.py                     Streamlit entry point (page navigation)
+views/
+  form.py                  "Submit preferences" page for TAs
+  admin.py                 "Build schedule" page for the MLC
 mlc_scheduler/
   models.py                data types (Slot, Participant, Schedule, Config, Result)
   csv_io.py                reading input CSVs, building output tables
@@ -157,6 +191,7 @@ mlc_scheduler/
   optimizer.py             the MILP (PuLP + HiGHS) and its lexicographic stages
   grievance.py             tie detection and grievance bookkeeping
   scheduler.py             run(): ties everything together
+  storage.py               where the form keeps the schedule and submissions
   __main__.py              command-line interface
 examples/                  sample inputs + generator
 tests/                     pytest suite  (python -m pytest)
@@ -164,10 +199,29 @@ tests/                     pytest suite  (python -m pytest)
 
 ## Sharing the app
 
-The app can be hosted for free on [Streamlit Community Cloud](https://streamlit.io/cloud):
-point it at this repository and `app.py`. Then MLC staff only need a browser.
+Anyone with the link can open both pages, so **protect the admin page** with
+a password. Put this in `.streamlit/secrets.toml` (never commit it), or in the
+hosting service's secrets settings:
+
+```toml
+admin_password = "choose-something"
+```
+
+Without a password set, the admin page is open, which is fine when running
+the app on your own computer.
+
+**Where to host.** The form keeps submissions in files, so it needs a server
+whose disk persists: a UBC or department server, or any small virtual
+machine. `streamlit run app.py --server.port 80` and point the link at it.
+[Streamlit Community Cloud](https://streamlit.io/cloud) is free and easy (point
+it at this repository and `app.py`), but its disk is wiped whenever the app
+restarts or goes to sleep, which would lose submissions. Only use it if you
+download the submissions regularly, or after switching
+[storage.py](mlc_scheduler/storage.py) to an external store (e.g. a database or
+Google Sheet). Only that one class would need to change.
 
 ## Possible extensions
 
-* Limits such as a maximum number of hours per day, or preferring back-to-back shifts.
-* Collect preferences with a form (e.g. Google Forms) that exports straight to the preferences CSV.
+* Let a TA see and edit their previous submission instead of starting over.
+* Load a roster (names + hours) so the form offers a name list instead of free text.
+* A persistent storage backend for free hosting (see above).

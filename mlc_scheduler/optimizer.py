@@ -7,7 +7,10 @@ Hard constraints
     * every participant gets exactly their number of hours,
     * nobody works a slot they marked as unavailable,
     * no slot gets more TAs than it needs,
-    * nobody works two overlapping slots (e.g. Mon 12:00 and Mon 12:30).
+    * nobody works two overlapping slots (e.g. Mon 12:00 and Mon 12:30),
+    * optional: at most max_hours_per_day hours per day, and at most
+      max_in_a_row back-to-back hours (slots where the next one starts exactly
+      when the previous one ends; any gap counts as a break).
 
 Objective (lexicographic: each stage is optimised, then frozen at its optimum
 before the next stage is solved, so later stages only break ties)
@@ -31,7 +34,7 @@ import random
 
 import pulp
 
-from .models import Config, Participant, Schedule, Slot
+from .models import SLOT_MINUTES, Config, Participant, Schedule, Slot
 
 
 class SchedulingError(Exception):
@@ -51,7 +54,17 @@ def costs(
     return table
 
 
-def build_model(schedule: Schedule, participants: list[Participant]):
+def back_to_back(schedule: Schedule, length: int) -> list[list[Slot]]:
+    """Every run of `length` slots that each start when the previous one ends."""
+    runs = []
+    for s0 in schedule.slots:
+        run = [Slot(s0.day, s0.start + k * SLOT_MINUTES) for k in range(length)]
+        if all(s in schedule.needed for s in run):
+            runs.append(run)
+    return runs
+
+
+def build_model(schedule: Schedule, participants: list[Participant], config: Config):
     prob = pulp.LpProblem("mlc_schedule", pulp.LpMinimize)
     slots = schedule.slots
     x = {
@@ -59,11 +72,21 @@ def build_model(schedule: Schedule, participants: list[Participant]):
         for i, p in enumerate(participants)
         for j, s in enumerate(slots)
     }
+    per_day = config.max_hours_per_day
+    in_a_row = config.max_in_a_row
+    too_long = back_to_back(schedule, in_a_row + 1) if in_a_row else []
     for i, p in enumerate(participants):
         prob += pulp.lpSum(x[p.name, s] for s in slots) == p.hours, f"hours_{i}"
         for j, s in enumerate(slots):
             if s in p.unavailable:
                 prob += x[p.name, s] == 0, f"unavailable_{i}_{j}"
+        # (limits that someone's total hours already satisfy are skipped)
+        if per_day and p.hours > per_day:
+            for d, day in enumerate(schedule.days):
+                prob += pulp.lpSum(x[p.name, s] for s in slots if s.day == day) <= per_day, f"day_{i}_{d}"
+        if in_a_row and p.hours > in_a_row:
+            for k, run in enumerate(too_long):
+                prob += pulp.lpSum(x[p.name, s] for s in run) <= in_a_row, f"row_{i}_{k}"
     for j, s in enumerate(slots):
         prob += pulp.lpSum(x[p.name, s] for p in participants) <= schedule.needed[s], f"need_{j}"
 
@@ -112,7 +135,7 @@ def solve(
     schedule: Schedule, participants: list[Participant], config: Config
 ) -> tuple[dict[str, list[Slot]], list[tuple[str, float]]]:
     """Returns (assignment, [(stage, optimal value), ...])."""
-    prob, x = build_model(schedule, participants)
+    prob, x = build_model(schedule, participants, config)
     # gapRel=0: each stage must be truly optimal, otherwise freezing it would
     # leave the later (tie-breaking) stages working on a suboptimal schedule
     solver = pulp.HiGHS(msg=False, gapRel=0, timeLimit=config.time_limit)
@@ -125,7 +148,8 @@ def solve(
             raise SchedulingError(
                 f"no feasible schedule ({pulp.LpStatus[prob.status]}) at stage "
                 f"'{name}'. Check that hours fit the schedule, and that nobody "
-                "has more hours than their available, non-overlapping slots allow."
+                "has more hours than their available slots and the hours-per-day / "
+                "in-a-row limits allow."
             )
         value = pulp.value(expr) or 0.0
         history.append((name, value))
