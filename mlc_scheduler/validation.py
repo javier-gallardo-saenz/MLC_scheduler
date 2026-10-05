@@ -46,9 +46,7 @@ def validate(
         if len(set(p.preferences)) != len(p.preferences):
             errors.append(f"{p.name}: the same slot is listed more than once")
         required = math.ceil(config.min_list_factor * p.hours)
-        if not p.preferences:
-            pass  # reported once, below
-        elif len(p.preferences) < required:
+        if p.preferences and len(p.preferences) < required:  # empty lists: see below
             errors.append(
                 f"{p.name}: ranked {len(p.preferences)} slots but must rank at least "
                 f"{required} ({config.min_list_factor:g} x {p.hours} hours)"
