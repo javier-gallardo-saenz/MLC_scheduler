@@ -16,6 +16,8 @@ preferences CSV - one row per participant: name, hours, then the ranked slots
                   whole days ('Fri'), single slots ('Mon 12:30') or busy
                   time ranges ('Tue 13:00-14:30', blocks every slot that
                   overlaps it). Those slots are never assigned to that TA.
+                  A Google Forms export (see google_forms.py) is also accepted.
+                  The hours column may be left out when a roster gives them.
 
 grievances CSV - name,grievance  (optional; missing names start at 0)
 
@@ -25,13 +27,24 @@ All readers accept a path or a file-like object (e.g. a Streamlit upload).
 """
 from __future__ import annotations
 
+import io
+import re
+from pathlib import Path
+
 import pandas as pd
 
+from . import google_forms
 from .models import Config, Participant, Result, Schedule, Slot, fmt_time, parse_time
 
 
 def _read(src) -> pd.DataFrame:
-    df = pd.read_csv(src, dtype=str, keep_default_na=False, skipinitialspace=True)
+    """CSV -> all-text table. Copes with Excel's quirks: a byte-order mark, and ';'
+    as the column separator (Excel in e.g. Spanish or French settings)."""
+    raw = src.read() if hasattr(src, "read") else Path(src).read_bytes()
+    text = raw.decode("utf-8-sig") if isinstance(raw, bytes) else raw.lstrip("﻿")
+    header = text.split("\n", 1)[0]
+    sep = ";" if ";" in header and "," not in header else ","
+    df = pd.read_csv(io.StringIO(text), sep=sep, dtype=str, keep_default_na=False, skipinitialspace=True)
     df.columns = [str(c).strip() for c in df.columns]
     return df.apply(lambda col: col.str.strip())
 
@@ -73,9 +86,13 @@ def parse_slot(text: str, schedule: Schedule) -> Slot:
 
 
 def parse_unavailable(text: str, schedule: Schedule) -> set[Slot]:
-    """'Fri; Mon 12:30; Tue 13:00-14:30' -> the set of slots that are ruled out."""
+    """'Fri; Mon 12:30; Tue 13:00-14:30' -> the set of slots that are ruled out.
+
+    Entries may be separated by ';' or ','.
+    """
     blocked = set()
-    for entry in filter(None, (e.strip() for e in text.split(";"))):
+    for entry in filter(None, (e.strip() for e in re.split(r"[;,]", text))):
+        entry = re.sub(r"\s*-\s*", "-", entry)  # 'Tue 13:00 - 14:30' -> 'Tue 13:00-14:30'
         parts = entry.split()
         if len(parts) == 1:  # whole day
             day = parse_day(parts[0], schedule, entry)
@@ -95,15 +112,24 @@ def parse_unavailable(text: str, schedule: Schedule) -> set[Slot]:
 META_COLUMNS = {"submitted", "timestamp", "email"}  # ignored when reading preferences
 
 
-def read_participants(src, schedule: Schedule) -> tuple[list[Participant], list[str]]:
-    """Returns (participants, errors). Rows with errors are still returned when possible."""
+def read_participants(
+    src, schedule: Schedule
+) -> tuple[list[Participant], list[str], list[str]]:
+    """Returns (participants, errors, warnings).
+
+    Accepts the preferences CSV format or a Google Forms export. Without an
+    hours column every participant gets 0 hours, to be filled from a roster.
+    """
     df = _read(src)
+    warnings: list[str] = []
+    if google_forms.is_export(df):
+        df, warnings = google_forms.to_preferences(df)
     lower = {c.lower(): c for c in df.columns}
-    if "name" not in lower or "hours" not in lower:
-        raise ValueError("preferences CSV needs 'name' and 'hours' columns")
-    unavail_col = lower.get("unavailable")
+    if "name" not in lower:
+        raise ValueError("preferences CSV needs a 'name' column")
+    hours_col, unavail_col = lower.get("hours"), lower.get("unavailable")
     pref_cols = [c for c in df.columns
-                 if c not in (lower["name"], lower["hours"], unavail_col) and c.lower() not in META_COLUMNS]
+                 if c not in (lower["name"], hours_col, unavail_col) and c.lower() not in META_COLUMNS]
 
     participants, errors = [], []
     for i, row in df.iterrows():
@@ -111,9 +137,9 @@ def read_participants(src, schedule: Schedule) -> tuple[list[Participant], list[
         if not name:
             continue
         try:
-            hours = int(float(row[lower["hours"]]))
+            hours = int(float(row[hours_col])) if hours_col else 0
         except ValueError:
-            errors.append(f"{name}: hours {row[lower['hours']]!r} is not a number")
+            errors.append(f"{name}: hours {row[hours_col]!r} is not a number")
             continue
         prefs = []
         for col in pref_cols:
@@ -130,7 +156,7 @@ def read_participants(src, schedule: Schedule) -> tuple[list[Participant], list[
             except ValueError as e:
                 errors.append(f"{name}: unavailable: {e}")
         participants.append(Participant(name, hours, prefs, unavailable=unavailable))
-    return participants, errors
+    return participants, errors, warnings
 
 
 def read_grievances(src) -> dict[str, int]:
@@ -170,6 +196,14 @@ def read_roster(src) -> tuple[list[dict], list[str]]:
             errors.append(f"{name}: {email!r} is not an email address")
         roster.append({"name": name, "hours": hours, "email": email})
     return roster, errors
+
+
+def read_assignments(src, schedule: Schedule) -> dict[str, list[Slot]]:
+    """Reads back the assignments.csv written by the scheduler."""
+    out: dict[str, list[Slot]] = {}
+    for _, row in _read(src).iterrows():
+        out.setdefault(row["name"], []).append(parse_slot(f"{row['day']} {row['start']}", schedule))
+    return out
 
 
 # ---------------------------------------------------------------- outputs

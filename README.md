@@ -6,71 +6,143 @@ replaces that: every TA submits a **ranked list of slots**, and a mixed-integer
 linear program (MILP) builds the schedule that gives each TA slots as high in
 their own ranking as possible, while staffing every slot.
 
-## Quick start
+## Setup
+
+Needs Python 3.11 or newer.
 
 ```bash
 python -m venv .venv
 .venv/Scripts/activate          # Windows  (macOS/Linux: source .venv/bin/activate)
 pip install -r requirements.txt
-
-streamlit run app.py            # interactive app in the browser
 ```
 
-The app has two pages:
+There are two ways to run a term. Both use the same files and the same
+optimisation, and both can email every TA their schedule at the end.
 
-* **Submit preferences**: the form TAs fill in (see below).
-* **Build schedule**: for the MLC. Load the schedule, open the form, and once
-  TAs have submitted, choose the options in the sidebar, press **Build
-  schedule** and download the results. Instead of using the form you can also
-  upload a preferences CSV, or switch on the example data to try things out.
+* **A. Google Forms, everything else on your computer.** No website to host.
+  TAs answer a Google Form; you download the answers as a CSV and build the
+  schedule locally, with the command line or the app running on your own
+  machine. All outputs are CSV files in a local folder.
+* **B. The web app.** TAs fill in a form inside the app. Needs the app to be
+  hosted somewhere TAs can reach (see [Sharing the app](#sharing-the-app)).
 
-There is also a command-line version:
+Either way, a **roster** is recommended: a CSV with one row per TA,
+`name,hours,email` (see [examples/roster.csv](examples/roster.csv)). With a
+roster, TAs pick their name from a list and are told their weekly hours, the
+roster's hours are the ones used, nobody outside the roster can be scheduled,
+and schedules can be emailed to its addresses.
+
+## A. Google Forms + run locally
+
+**1. Create the form.**
 
 ```bash
-python -m mlc_scheduler examples/schedule.csv examples/preferences.csv \
-    --grievances examples/grievances.csv --mode tiered --tiers 6 4 --seed 1 --out results
+python -m mlc_scheduler google-form schedule.csv --roster roster.csv
 ```
 
-## A term, step by step
+writes `create_form.gs`. Open [script.google.com](https://script.google.com),
+click **New project**, replace the code with the contents of that file, save
+and click **Run** (allow the permissions it asks for; it only creates this one
+form). The execution log shows the link to send to TAs. The form asks for:
 
-1. **Roster** (optional, recommended). On **Build schedule**, upload a roster
-   CSV with one row per TA: `name,hours,email` (see
-   [examples/roster.csv](examples/roster.csv)) and press **Use this roster**.
-2. **Open the form.** Upload the MLC schedule and press **Open the form**. The
-   form offers the slots of that schedule and asks for the sidebar's minimum
-   list length.
+* **Name**: a dropdown of the roster, showing each TA's hours, e.g. "Ada (4 h/week)".
+  Without `--roster` it asks for name and hours instead;
+* **Unavailable days** and **Unavailable times** (e.g. `Tue 13:00-14:30; Thu 13:00-14:30`);
+* **Choice 1 (favourite)**, **Choice 2**, ...: one dropdown of slots per rank.
+
+If a TA answers more than once, their latest answer counts.
+
+**2. Download the answers.** In the form's *Responses* tab, download the
+responses as a CSV (or open the linked Google Sheet and use
+*File > Download > CSV*).
+
+**3. Build the schedule.**
+
+```bash
+python -m mlc_scheduler run schedule.csv responses.csv --roster roster.csv \
+    --include-missing --grievances grievances.csv --out results
+```
+
+The Google Forms CSV is used as it is. `--include-missing` also schedules TAs
+on the roster who never answered (they get whatever slots are left). The
+options from [Options](#options) are available too, e.g. `--mode tiered --tiers 6 4`,
+`--max-per-day 3`, `--max-in-a-row 2`, `--seed 1`. Run
+`python -m mlc_scheduler run -h` for the full list. This writes to `results/`:
+
+| file | content |
+|---|---|
+| `schedule.csv` | the timetable: times x days, each cell lists the TAs |
+| `assignments.csv` | one row per TA and slot, with the rank the TA gave it |
+| `summary.csv` | per TA: ranks received, unranked slots, grievance points |
+| `grievances.csv` | updated grievance points: pass it with `--grievances` next term |
+
+**4. Email each TA their schedule.**
+
+```bash
+python -m mlc_scheduler emails results/assignments.csv schedule.csv roster.csv \
+    --term 2026-09-08 2026-12-04
+```
+
+writes one email per TA to `results/emails/`, with a calendar file of their
+weekly shifts between the two dates (leave out `--term` for no calendar). The
+`.eml` files open as ready-to-send drafts in Outlook (and in Apple Mail or
+Thunderbird). There is also an `emails.csv` for a mail merge. To send them all
+at once instead, add `--send --smtp smtp.toml` (see
+[Email account](#email-account-for-sending)). It asks for confirmation first.
+Use `--subject` and `--message message.txt` to change the text; `{name}`,
+`{hours}` and `{schedule}` are filled in per TA.
+
+**Prefer clicking to typing commands?** Run `streamlit run app.py` on your own
+computer, open **Build schedule**, and under *3. Preferences* choose **Upload a
+preferences CSV**. The page also offers the Google Form script for download,
+reads the responses CSV, and does the emails. Nothing leaves your computer
+except the emails you choose to send.
+
+## B. The web app
+
+```bash
+streamlit run app.py
+```
+
+The app has two pages: **Submit preferences** (for TAs) and **Build schedule**
+(for the MLC).
+
+1. **Schedule and roster.** On **Build schedule**, upload the MLC schedule and
+   the roster. An uploaded roster is used and saved right away.
+2. **Open the form.** Under *3. Preferences*, choose **TAs fill in the form in
+   this app** and press **Open the form**. The form offers the slots of that
+   schedule and asks for the sidebar's minimum list length.
 3. **TAs fill in the form.** Send them the app's link. On **Submit preferences**:
-   * with a roster, a TA picks their name from a list and is told their weekly
-     hours and how many slots to rank. Without one, they type their name and hours;
+   * with a roster, a TA can only pick their name from the roster's list, and
+     their hours are filled in for them. Without one, they type their name and hours;
    * they enter the days and times they can't work (e.g. their classes);
    * they pick slots one by one, favourite first. A timetable preview shows
      their ranking, and the form won't submit until the list is long enough
      and doesn't clash with their busy times.
 
-   Submitting again under the same name (case and spacing don't matter)
-   replaces the earlier answers.
-4. **Build.** Back on **Build schedule**, the submissions are used
-   automatically (an uploaded preferences file takes priority). You can see
-   who on the roster hasn't submitted yet, view and delete submissions,
-   download them as a preferences CSV, and **Close the form**. With a roster,
-   the roster's hours are used, and you can choose to also schedule TAs who
-   never submitted. They get whatever slots are left once everyone else is placed.
+   Submitting again replaces their earlier answers.
+4. **Build.** The page shows who on the roster hasn't submitted yet, lets you
+   view and delete submissions, and **Close the form**. You can choose to
+   also schedule TAs who never submitted.
 5. **Send everyone their schedule.** Under *Send each TA their schedule*, edit
-   the subject and message (`{name}`, `{hours}` and `{schedule}` are filled in
-   per TA), preview each email, and optionally attach a **calendar file**:
-   a weekly repeating event per shift between the term's first and last day,
-   which TAs can open to add their shifts to Google Calendar, Outlook, etc.
-   To send from the app, set up an email account (see below). Otherwise,
-   download all emails as a CSV for a mail merge.
+   the message, preview each email, optionally attach the calendar file, and
+   send (needs an [email account](#email-account-for-sending)) or download
+   the emails as a CSV for a mail merge.
+
+**One source of preferences at a time.** Preferences come *either* from the
+in-app form *or* from an uploaded CSV, never both. You choose which under
+*3. Preferences*. While the in-app form is open you can't build from a CSV
+(the page asks you to close the form first), and in CSV mode the in-app
+submissions are not used.
 
 The roster, form and submissions are stored as plain files in `data/` (or the
-folder in the `MLC_DATA_DIR` environment variable). See
-[Sharing the app](#sharing-the-app) before hosting it.
+folder in the `MLC_DATA_DIR` environment variable).
 
-### Email account for sending
+## Email account for sending
 
-Add the account to `.streamlit/secrets.toml` (or the hosting service's
-secrets settings), next to the admin password:
+Sending from the command line reads `smtp.toml` (pass another path with
+`--smtp`); the app reads `.streamlit/secrets.toml` (or the hosting service's
+secrets settings). The layout is the same in both:
 
 ```toml
 [smtp]
@@ -81,10 +153,11 @@ password = "app password"      # for Gmail: an app password, not the normal one
 sender = "UBC MLC <mlc.scheduling@gmail.com>"   # optional, defaults to user
 ```
 
-Sending asks you to confirm the schedule is final, sends one email per TA
-(TAs without an email on the roster are listed so you can contact them
-separately), and reports any that failed. The button then locks, so the same
-schedule can't be sent twice by accident.
+Both files are in `.gitignore`; never commit them. On the command line you
+can leave out `password` and type it when asked. Sending asks you to confirm,
+sends one email per TA (TAs without an email on the roster are listed so you
+can contact them separately), and reports any that failed. In the app the
+button then locks, so the same schedule can't be sent twice by accident.
 
 ## Input files
 
@@ -102,12 +175,17 @@ time,Mon,Tue,Wed,Thu,Fri
 ...
 ```
 
+**Roster** (`roster.csv`, optional, recommended): `name,hours,email`, one row
+per TA working this term. The email column may be left blank for some TAs.
+
 **Preferences** (`preferences.csv`): one row per TA: name, hours, then their
 slots from most to least wanted. Any number of columns; blanks are ignored.
-Days can be written `Mon` or `Monday`, times `12:30` or `12`.
+Days can be written `Mon` or `Monday`, times `12:30` or `12`. With a roster,
+the `hours` column can be left out. A Google Forms responses CSV from the form
+made by `google-form` is also accepted as it is.
 
 An optional `unavailable` column lists times the TA **cannot** work, separated
-by `;`. Each entry is one of:
+by `;` (or `,`). Each entry is one of:
 
 * a whole day: `Fri`
 * a single slot: `Mon 12:30`
@@ -126,14 +204,6 @@ Bob,2,,Wed 12:00,Thu 16:30,Mon 17:00,...
 **Grievance points** (`grievances.csv`, optional): `name,grievance`. Use the file
 produced by the previous run. People in it who are not scheduled this time are
 carried over unchanged.
-
-## Output files
-
-| file | content |
-|---|---|
-| `schedule.csv` | the timetable: times x days, each cell lists the TAs |
-| `assignments.csv` | one row per TA and slot, with the rank the TA gave it (blank = not in their list) |
-| `grievances.csv` | updated grievance points, the input for next time |
 
 ## How it works
 
@@ -227,16 +297,18 @@ mlc_scheduler/
   optimizer.py             the MILP (PuLP + HiGHS) and its lexicographic stages
   grievance.py             tie detection and grievance bookkeeping
   scheduler.py             run(): ties everything together
-  storage.py               where the form keeps the roster, schedule and submissions
+  roster.py                applying the roster (names, hours, who is missing)
+  google_forms.py          Google Form script and reading its responses CSV
+  storage.py               where the in-app form keeps the roster, schedule and submissions
   notify.py                emails and calendar files for each TA
-  __main__.py              command-line interface
+  __main__.py              command line: google-form, run, emails
 examples/                  sample inputs + generator
 tests/                     pytest suite  (python -m pytest)
 ```
 
 ## Sharing the app
 
-Anyone with the link can open both pages, so **protect the admin page** with
+This is only needed for way B. Anyone with the link can open both pages, so **protect the admin page** with
 a password. Put this in `.streamlit/secrets.toml` (never commit it), or in the
 hosting service's secrets settings:
 

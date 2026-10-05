@@ -131,7 +131,7 @@ def test_validation():
 def test_csv_round_trip():
     sched = csv_io.read_schedule(io.StringIO("time,Mon,Tue\n12:00,2,1\n12:30,,1\n"))
     assert sched.needed == {S("Mon 12:00"): 2, S("Tue 12:00"): 1, S("Tue 12:30"): 1}
-    people, errors = csv_io.read_participants(io.StringIO(
+    people, errors, _ = csv_io.read_participants(io.StringIO(
         "name,hours,p1,p2,p3\nAna,1,monday 12:00,Tue 12,\nBo,1,Wed 12:00,Tue 12:30,Mon 13:00\n"
     ), sched)
     assert people[0].preferences == [S("Mon 12:00"), S("Tue 12:00")]
@@ -140,7 +140,7 @@ def test_csv_round_trip():
 
 def test_example_files_run():
     sched = csv_io.read_schedule(EXAMPLES / "schedule.csv")
-    people, errors = csv_io.read_participants(EXAMPLES / "preferences.csv", sched)
+    people, errors, _ = csv_io.read_participants(EXAMPLES / "preferences.csv", sched)
     assert not errors
     grievances = csv_io.read_grievances(EXAMPLES / "grievances.csv")
     res = run(sched, people, Config(mode="tiered", tiers=[6, 4], seed=1), grievances)
@@ -161,7 +161,7 @@ def test_parse_unavailable():
     with pytest.raises(ValueError):
         csv_io.parse_unavailable("Mon 14:00-13:00", sched)
 
-    people, errors = csv_io.read_participants(io.StringIO(
+    people, errors, _ = csv_io.read_participants(io.StringIO(
         "name,hours,unavailable,p1\nAna,1,Tue,Mon 12:00\nBo,1,,Tue 12:00\n"
     ), sched)
     assert not errors
@@ -236,7 +236,7 @@ def test_form_store(tmp_path):
     assert store.get("ANA RUIZ")["preferences"] == ["Tue 12:30", "Mon 12:00"]
 
     # the export is a valid preferences file (the 'submitted' column is ignored)
-    people, errors = csv_io.read_participants(io.StringIO(store.to_csv()), sched)
+    people, errors, _ = csv_io.read_participants(io.StringIO(store.to_csv()), sched)
     assert not errors
     assert [p.preferences for p in people] == [
         [S("Tue 12:00"), S("Mon 12:00"), S("Tue 12:30")], [S("Tue 12:30"), S("Mon 12:00")]]
@@ -246,21 +246,25 @@ def test_form_store(tmp_path):
     assert [s["name"] for s in store.submissions()] == ["ana ruiz"] and store.schedule_path() is None
 
 
-def test_roster_drives_hours_and_includes_non_submitters(tmp_path):
-    from mlc_scheduler.storage import FormStore
+def test_roster_drives_hours_and_includes_non_submitters():
+    from mlc_scheduler.roster import apply_roster
     roster, errors = csv_io.read_roster(io.StringIO(
         "name,hours,email\nAna Ruiz,1,ana@x.ca\nBo,2,bo@x.ca\nCy,1,\n"))
     assert not errors and roster[2] == {"name": "Cy", "hours": 1, "email": ""}
     _, errors = csv_io.read_roster(io.StringIO("name,hours,email\nA,1,nope\na,2,\n"))
     assert len(errors) == 2  # bad address + duplicate
 
-    store = FormStore(tmp_path)
-    store.set_roster(roster)
-    store.save("ana ruiz", 5, "", ["Mon 12:00"])  # hours on the roster win
     sched = make_schedule({"Mon 12:00": 1, "Mon 13:00": 1, "Tue 12:00": 2})
-    people, _ = csv_io.read_participants(io.StringIO(store.to_csv()), sched)
-    assert [(p.name, p.hours) for p in people] == [("Ana Ruiz", 1)]
-    people, _ = csv_io.read_participants(io.StringIO(store.to_csv(include_missing=True)), sched)
+    # hours on the roster win; 'Zed' is not on the roster
+    people, _, _ = csv_io.read_participants(io.StringIO(
+        "name,hours,p1\nana ruiz,5,Mon 12:00\nZed,1,Mon 13:00\n"), sched)
+    check = apply_roster(people, roster)
+    assert [(p.name, p.hours) for p in check.participants] == [("Ana Ruiz", 1), ("Zed", 1)]
+    assert check.unknown == ["Zed"] and check.missing == ["Bo", "Cy"]
+
+    people, _, _ = csv_io.read_participants(io.StringIO("name,p1\nAna Ruiz,Mon 12:00\n"), sched)
+    assert people[0].hours == 0  # no hours column: the roster provides them
+    people = apply_roster(people, roster, include_missing=True).participants
     assert [(p.name, p.hours, len(p.preferences)) for p in people] == [
         ("Ana Ruiz", 1, 1), ("Bo", 2, 0), ("Cy", 1, 0)]
 
@@ -317,3 +321,78 @@ def test_send_uses_one_smtp_session(monkeypatch):
     assert result["Ana"] == "sent" and result["Bo"].startswith("failed")
     assert log == [("connect", "smtp.x.ca", 587), ("starttls",), ("login", "mlc@x.ca"),
                    ("send", "mlc@x.ca", "ana@x.ca", "Hi", ["mlc_schedule.ics"]), ("quit",)]
+
+
+def test_google_forms_export_is_read_directly():
+    sched = make_schedule({"Mon 12:00": 1, "Mon 13:00": 1, "Tue 12:00": 1, "Fri 12:00": 1})
+    export = (
+        "Timestamp,Name,Unavailable days,Unavailable times,Choice 1 (favourite),Choice 2,Choice 3\n"
+        "10/1/2026 9:00:00,Ana (2 h/week),Fri,,Mon 12:00-13:00,Tue 12:00-13:00,\n"
+        "10/1/2026 9:30:00,Bo (1 h/week),\"Mon, Fri\",,Tue 12:00-13:00,Tue 12:00-13:00,\n"
+        "10/2/2026 8:00:00,Ana (2 h/week),,Tue 11:30 - 12:30,Mon 13:00-14:00,Mon 12:00-13:00,Fri 12:00-13:00\n"
+    )
+    people, errors, warnings = csv_io.read_participants(io.StringIO(export), sched)
+    assert not errors
+    ana, bo = people  # Ana's second answer replaced her first
+    assert (ana.name, ana.hours) == ("Ana", 0)  # hours come from the roster
+    assert ana.preferences == [S("Mon 13:00"), S("Mon 12:00"), S("Fri 12:00")]
+    assert ana.unavailable == {S("Tue 12:00")}
+    assert bo.preferences == [S("Tue 12:00")] and bo.unavailable == {S("Mon 12:00"), S("Mon 13:00"), S("Fri 12:00")}
+    assert any("Ana answered the form more than once" in w for w in warnings)
+    assert any("Bo picked Tue 12:00 for more than one choice" in w for w in warnings)
+
+
+def test_google_form_script():
+    from mlc_scheduler import google_forms
+    sched = make_schedule({"Mon 12:00": 1, "Mon 12:30": 1, "Tue 12:00": 2})
+    script = google_forms.apps_script(sched, [{"name": "Ana", "hours": 2, "email": ""}], 2.0)
+    assert 'const NAMES = [\n  "Ana (2 h/week)"\n]' in script
+    assert '"Mon 12:00-13:00"' in script and "const CHOICES = 3;" in script  # capped by #slots
+    assert "function createForm()" in script and "{{" not in script
+    no_roster = google_forms.apps_script(sched)
+    assert "const NAMES = []" in no_roster and "const REQUIRED_CHOICES = 1;" in no_roster
+
+
+def test_cli_emails(tmp_path, monkeypatch):
+    from mlc_scheduler import notify
+    from mlc_scheduler.__main__ import main
+    (tmp_path / "schedule.csv").write_text("time,Mon,Tue\n12:00,1,1\n13:00,1,0\n")
+    (tmp_path / "assignments.csv").write_text(
+        "name,day,start,end,rank\nAna,Mon,12:00,13:00,1\nAna,Tue,12:00,13:00,\nBo,Mon,13:00,14:00,2\n")
+    (tmp_path / "roster.csv").write_text("name,hours,email\nAna,2,ana@x.ca\nBo,1,\n")
+    (tmp_path / "smtp.toml").write_text('[smtp]\nhost = "smtp.x.ca"\nport = 587\nuser = "mlc@x.ca"\npassword = "pw"\n')
+    sent = []
+
+    class FakeSMTP:
+        def __init__(self, *a, **k): pass
+        def __enter__(self): return self
+        def __exit__(self, *e): pass
+        def starttls(self): pass
+        def login(self, *a): pass
+        def send_message(self, m): sent.append(m)
+
+    monkeypatch.setattr(notify.smtplib, "SMTP", FakeSMTP)
+    args = [str(tmp_path / f) for f in ("assignments.csv", "schedule.csv", "roster.csv")]
+    out = tmp_path / "emails"
+    assert main(["emails", *args, "--out", str(out), "--term", "2026-09-08", "2026-12-04"]) == 0
+    assert sorted(p.name for p in out.iterdir()) == ["Ana.eml", "emails.csv"]  # Bo has no address
+    draft = (out / "Ana.eml").read_text()
+    assert "X-Unsent: 1" in draft and "Mon 12:00-13:00" in draft and "mlc_schedule.ics" in draft
+    assert sent == []  # nothing is sent without --send
+
+    assert main(["emails", *args, "--out", str(out), "--send", "--smtp", str(tmp_path / "smtp.toml"), "--yes"]) == 0
+    assert [(m["From"], m["To"]) for m in sent] == [("mlc@x.ca", "ana@x.ca")]
+
+
+def test_excel_style_csvs():
+    # byte-order mark + ';' separators, as saved by Excel in many European locales
+    raw = "\ufeffname;hours;email\r\nAna;2;ana@x.ca\r\nBo;1;\r\n".encode("utf-8")
+    roster, errors = csv_io.read_roster(io.BytesIO(raw))
+    assert not errors and roster == [{"name": "Ana", "hours": 2, "email": "ana@x.ca"},
+                                     {"name": "Bo", "hours": 1, "email": ""}]
+    sched = csv_io.read_schedule(io.BytesIO("\ufefftime;Mon\r\n12:00;1\r\n".encode("utf-8")))
+    # ';' inside a comma-separated file (the unavailable column) is not mistaken for a separator
+    people, errors, _ = csv_io.read_participants(io.StringIO(
+        'name,hours,unavailable,p1\nAna,1,"Mon 12:00; Tue",Mon 12:00\n'), make_schedule({"Mon 12:00": 1, "Tue 12:00": 1}))
+    assert people[0].unavailable == {S("Mon 12:00"), S("Tue 12:00")}
+    assert sched.needed == {S("Mon 12:00"): 1}

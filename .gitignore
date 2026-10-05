@@ -5,3 +5,5 @@ __pycache__/
 results/
 data/
 .streamlit/secrets.toml
+smtp.toml
+create_form.gs

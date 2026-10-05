@@ -41,7 +41,9 @@ def validate(
         errors.append(f"{dup}: appears more than once in the preferences file")
 
     for p in participants:
-        if p.hours <= 0:
+        if p.hours == 0:
+            errors.append(f"{p.name}: no hours given (add an 'hours' column or load a roster)")
+        elif p.hours < 0:
             errors.append(f"{p.name}: hours must be positive (got {p.hours})")
         if len(set(p.preferences)) != len(p.preferences):
             errors.append(f"{p.name}: the same slot is listed more than once")

@@ -8,8 +8,8 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from mlc_scheduler import Config, SchedulingError, csv_io, notify, run
-from mlc_scheduler.models import name_key
+from mlc_scheduler import Config, SchedulingError, csv_io, google_forms, notify, run
+from mlc_scheduler.roster import apply_roster, emails as roster_emails
 from mlc_scheduler.storage import FormStore
 from mlc_scheduler.validation import validate
 
@@ -75,25 +75,25 @@ with st.sidebar:
                            help="settles exact ties; same seed + same inputs = same schedule")
 
 # ------------------------------------------------------------------- inputs
-st.subheader("1. Inputs")
-use_example = st.toggle("Use example data for files not uploaded", value=False)
-c1, c2, c3 = st.columns(3)
+st.subheader("1. Schedule")
+use_example = st.toggle("Use example data for anything not uploaded", value=False)
+c1, c3 = st.columns(2)
 up_schedule = c1.file_uploader("MLC schedule", type="csv",
                                help="grid: first column = start time, one column per day, cells = TAs needed")
-up_prefs = c2.file_uploader("Preferences", type="csv",
-                            help="leave empty to use the form submissions")
-up_griev = c3.file_uploader("Grievance points (optional)", type="csv", help="name, grievance")
+up_griev = c3.file_uploader("Grievance points (optional)", type="csv",
+                            help="name, grievance: the file produced by the previous run")
 with st.expander("File formats & templates"):
     st.markdown(
         "- **Schedule**: `time,Mon,Tue,...` then rows like `12:30,1,1,2,1,1`. Every slot lasts one hour; blank/0 = no slot.\n"
-        "- **Preferences**: `name,hours,pref1,pref2,...` then rows like `Alice,4,Mon 12:00,Wed 14:30,...` (best first).\n"
-        "  An optional `unavailable` column lists, separated by `;`, whole days (`Fri`), single slots "
+        "- **Roster**: `name,hours,email`, one row per TA working this term.\n"
+        "- **Preferences**: `name,hours,pref1,pref2,...` then rows like `Alice,4,Mon 12:00,Wed 14:30,...` (best first). "
+        "With a roster the `hours` column can be left out. "
+        "An optional `unavailable` column lists, separated by `;`, whole days (`Fri`), single slots "
         "(`Mon 12:30`) or busy times (`Tue 13:00-14:30`, which rules out every slot overlapping it). "
-        "Those slots are never assigned to that TA.\n"
-        "- **Grievance points**: `name,grievance`. Use the file produced by the previous run.\n"
-        "- **Roster** (section 2): `name,hours,email`, one row per TA working this term."
+        "A Google Forms export made with the script from section 3 can be used as it is.\n"
+        "- **Grievance points**: `name,grievance`. Use the file produced by the previous run."
     )
-    files = ("schedule.csv", "preferences.csv", "grievances.csv", "roster.csv")
+    files = ("schedule.csv", "roster.csv", "preferences.csv", "grievances.csv")
     for col, f in zip(st.columns(len(files)), files):
         col.download_button(f"Example {f}", (EXAMPLES / f).read_bytes(), f, "text/csv")
 
@@ -106,10 +106,8 @@ def pick(upload, fallbacks):
     return next(((src, why) for src, why, ok in fallbacks if ok), (None, None))
 
 
-submissions = store.submissions()
-roster = store.roster()
 src_schedule, why_schedule = pick(up_schedule, [
-    (store.schedule_path(), "the schedule the form is using", store.schedule_path() is not None),
+    (store.schedule_path(), "the schedule the in-app form is using", store.schedule_path() is not None),
     (EXAMPLES / "schedule.csv", "example data", use_example),
 ])
 src_griev, why_griev = pick(up_griev, [(EXAMPLES / "grievances.csv", "example data", use_example)])
@@ -126,14 +124,14 @@ except ValueError as e:
     st.error(f"Could not read the schedule: {e}")
     st.stop()
 
-# ----------------------------------------------------------- roster & form
-st.subheader("2. Roster and preference form")
-st.markdown("**Roster**")
+# ------------------------------------------------------------------ roster
+st.subheader("2. Roster")
 up_roster = st.file_uploader(
-    "Roster (name, hours, email)", type="csv",
-    help="Who works at the MLC this term. With a roster, TAs pick their name on the form "
-         "and are told their hours, and their schedules can be emailed to them.")
-if up_roster is not None:
+    "Roster: name, hours, email (optional, recommended)", type="csv",
+    help="Who works at the MLC this term. With a roster, TAs pick their name from a list on the "
+         "form and are told their hours, the roster's hours are the ones used, and schedules "
+         "can be emailed to the addresses in its email column.")
+if up_roster is not None:  # an uploaded roster is used (and saved for the in-app form) right away
     up_roster.seek(0)
     try:
         new_roster, roster_errors = csv_io.read_roster(up_roster)
@@ -141,100 +139,139 @@ if up_roster is not None:
         new_roster, roster_errors = [], [str(e)]
     if roster_errors:
         st.error("Problems in the roster:\n\n" + "\n".join(f"- {e}" for e in roster_errors))
-    elif new_roster != roster and st.button(f"Use this roster ({len(new_roster)} TAs)"):
+        st.stop()
+    if new_roster != store.roster():
         store.set_roster(new_roster)
-        st.rerun()
-
-done = {name_key(s["name"]) for s in submissions}
-missing = [r["name"] for r in roster if name_key(r["name"]) not in done]
+roster = store.roster()
 if roster:
-    st.write(
-        f"**{len(roster)}** TAs on the roster, working **{sum(r['hours'] for r in roster)}** hours "
-        f"per week ({schedule.capacity} TA-hours needed); "
-        f"{sum(bool(r['email']) for r in roster)} have an email address. "
-        f"**{len(roster) - len(missing)}** have submitted their preferences."
-    )
+    st.caption("Using the uploaded roster." if up_roster is not None else "Using the saved roster.")
+elif use_example:
+    roster = csv_io.read_roster(EXAMPLES / "roster.csv")[0]
+    st.caption("Using the example roster.")
+
+if roster:
+    st.write(f"**{len(roster)}** TAs working **{sum(r['hours'] for r in roster)}** hours per week "
+             f"({schedule.capacity} TA-hours needed); "
+             f"{sum(bool(r['email']) for r in roster)} have an email address.")
     with st.expander("Roster"):
-        st.dataframe(pd.DataFrame([{**r, "submitted": name_key(r["name"]) in done} for r in roster]),
-                     hide_index=True, width="stretch")
-        if st.button("Remove roster"):
+        st.dataframe(pd.DataFrame(roster), hide_index=True, width="stretch")
+        if store.roster() and up_roster is None and st.button("Remove roster"):
             store.clear_roster()
             st.rerun()
-    on_roster = {name_key(r["name"]) for r in roster}
-    strangers = [s["name"] for s in submissions if name_key(s["name"]) not in on_roster]
-    if strangers:
-        st.warning(f"Submitted but not on the roster: {', '.join(strangers)}. "
-                   "They are scheduled with the hours they entered (delete them below if needed).")
-
-st.markdown("**Preference form**")
-form_open = store.schedule_path() is not None
-schedule_csv = csv_io.schedule_to_csv(schedule)
-if form_open:
-    st.success(f"The form is **open**: TAs submit on the *Submit preferences* page. "
-               f"{len(submissions)} submissions so far.")
-    if csv_io.read_schedule(store.schedule_path()).needed != schedule.needed:
-        st.warning("The form is offering a different schedule from the one loaded above.")
-    if store.settings()["min_list_factor"] != min_factor:
-        st.warning("The form asks for a different minimum list length from the one in the sidebar.")
 else:
-    st.info("The form is **closed**. Opening it lets TAs rank the slots of the schedule loaded above.")
-f1, f2, _ = st.columns([1, 1, 2])
-if f1.button("Update the form" if form_open else "Open the form",
-             help="the form uses the schedule loaded above and the sidebar's minimum list length"):
-    store.open_form(schedule_csv, min_factor)
-    st.rerun()
-if form_open and f2.button("Close the form"):
-    store.close_form()
-    st.rerun()
+    st.caption("No roster: TAs type their own name and hours.")
 
-if submissions:
-    with st.expander(f"Submissions ({len(submissions)})"):
-        st.dataframe(pd.DataFrame([{
-            "name": s["name"], "hours": s["hours"], "slots ranked": len(s["preferences"]),
-            "unavailable": s["unavailable"], "submitted": s["submitted"].replace("T", " "),
-        } for s in submissions]), hide_index=True, width="stretch")
-        g1, g2, g3 = st.columns([2, 1, 2])
-        who = g1.selectbox("Submission", [s["name"] for s in submissions], label_visibility="collapsed")
-        if g2.button("Delete"):
-            store.delete(who)
+# ------------------------------------------------------------- preferences
+st.subheader("3. Preferences")
+SOURCES = {
+    "form": "TAs fill in the form in this app",
+    "csv": "Upload a preferences CSV (your own file, or a Google Forms export)",
+}
+saved_source = store.settings()["source"]
+source = st.radio("Where do the preferences come from?", list(SOURCES), format_func=SOURCES.get,
+                  index=list(SOURCES).index(saved_source),
+                  help="Only one source is used, never both, so nobody's answers are silently overridden.")
+if source != saved_source:
+    store.set_setting("source", source)
+
+submissions = store.submissions()
+form_open = store.schedule_path() is not None
+src_prefs = None
+if source == "form":
+    schedule_csv = csv_io.schedule_to_csv(schedule)
+    if form_open:
+        st.success(f"The form is **open**: TAs submit on the *Submit preferences* page. "
+                   f"{len(submissions)} submissions so far.")
+        if csv_io.read_schedule(store.schedule_path()).needed != schedule.needed:
+            st.warning("The form is offering a different schedule from the one loaded above.")
+        if store.settings()["min_list_factor"] != min_factor:
+            st.warning("The form asks for a different minimum list length from the one in the sidebar.")
+    else:
+        st.info("The form is **closed**. Opening it lets TAs rank the slots of the schedule loaded above.")
+    if roster and not store.roster():
+        st.warning("The example roster is not used by the form; upload a roster for that.")
+    f1, f2, _ = st.columns([1, 1, 2])
+    if f1.button("Update the form" if form_open else "Open the form",
+                 help="the form uses the schedule loaded above and the sidebar's minimum list length"):
+        store.open_form(schedule_csv, min_factor)
+        st.rerun()
+    if form_open and f2.button("Close the form"):
+        store.close_form()
+        st.rerun()
+
+    if submissions:
+        with st.expander(f"Submissions ({len(submissions)})"):
+            st.dataframe(pd.DataFrame([{
+                "name": s["name"], "hours": s["hours"], "slots ranked": len(s["preferences"]),
+                "unavailable": s["unavailable"], "submitted": s["submitted"].replace("T", " "),
+            } for s in submissions]), hide_index=True, width="stretch")
+            g1, g2, g3 = st.columns([2, 1, 2])
+            who = g1.selectbox("Submission", [s["name"] for s in submissions], label_visibility="collapsed")
+            if g2.button("Delete"):
+                store.delete(who)
+                st.rerun()
+            g3.download_button("Download as preferences CSV", store.to_csv(), "preferences.csv", "text/csv")
+        src_prefs = io.StringIO(store.to_csv())
+else:
+    if form_open:
+        st.error("The in-app form is still open, so TAs could submit answers that would be ignored. "
+                 "Close it to use a preferences CSV.")
+        if st.button("Close the in-app form"):
+            store.close_form()
             st.rerun()
-        g3.download_button("Download as preferences CSV", store.to_csv(), "preferences.csv", "text/csv")
-
-include_missing = False
-if roster and missing:
-    include_missing = st.checkbox(
-        f"Also schedule the {len(missing)} roster TAs who haven't submitted", value=True,
-        help="They get whatever slots are left once everyone else is placed "
-             f"(still missing: {', '.join(missing)})")
-
-src_prefs, why_prefs = pick(up_prefs, [
-    (io.StringIO(store.to_csv(include_missing)),
-     f"the {len(submissions)} form submissions" + (f" + {len(missing)} roster TAs without one" if include_missing else ""),
-     bool(submissions) or include_missing),
-    (EXAMPLES / "preferences.csv", "example data", use_example),
-])
-if why_prefs:
-    c2.caption(f"Using {why_prefs}.")
+        st.stop()
+    if submissions:
+        st.caption(f"The {len(submissions)} submissions made through the in-app form are not used.")
+    with st.expander("Collect preferences with Google Forms"):
+        st.markdown(
+            "1. Download the script below. It creates a Google Form for the schedule loaded above"
+            + (" in which TAs pick their name from the roster and see their hours" if roster else "")
+            + ".\n2. Open [script.google.com](https://script.google.com), click **New project**, replace "
+            "the code with the script, save and click **Run**. Allow the permissions it asks for.\n"
+            "3. The execution log shows the link to send to TAs.\n"
+            "4. When everyone has answered, download the responses as a CSV (in the form's "
+            "*Responses* tab) and upload that file below."
+        )
+        st.download_button("Download the Google Form script",
+                           google_forms.apps_script(schedule, roster, min_factor),
+                           "create_form.gs", "text/plain")
+    up_prefs = st.file_uploader("Preferences CSV or Google Forms responses", type="csv")
+    src_prefs, why_prefs = pick(up_prefs, [(EXAMPLES / "preferences.csv", "example data", use_example)])
+    if why_prefs:
+        st.caption(f"Using {why_prefs}.")
 
 if src_prefs is None:
-    st.info("Waiting for preferences: collect them with the form, or upload a preferences file.")
+    st.info("Waiting for preferences: " + ("open the form and let TAs submit." if source == "form"
+                                           else "upload a preferences CSV."))
     st.stop()
 
 try:
     config = Config(mode=mode, tiers=numbers(tiers_text, int), weights=numbers(weights_text),
                     rank_exponent=exponent, min_list_factor=min_factor, seed=int(seed),
                     max_hours_per_day=max_day or None, max_in_a_row=max_row or None)
-    participants, errors = csv_io.read_participants(src_prefs, schedule)
+    participants, errors, warnings = csv_io.read_participants(src_prefs, schedule)
     grievances = csv_io.read_grievances(src_griev) if src_griev is not None else {}
 except ValueError as e:
     st.error(f"Could not read the inputs: {e}")
     st.stop()
 
-more_errors, warnings = validate(schedule, participants, config)
+if roster:
+    check = apply_roster(participants, roster)
+    errors += [f"{n}: not on the roster" for n in check.unknown]
+    st.write(f"**{len(roster) - len(check.missing)}** of the {len(roster)} TAs on the roster have sent preferences.")
+    if check.missing and st.checkbox(
+            f"Also schedule the {len(check.missing)} who haven't", value=True,
+            help="They get whatever slots are left once everyone else is placed "
+                 f"(missing: {', '.join(check.missing)})"):
+        check = apply_roster(participants, roster, include_missing=True)
+    participants = check.participants
+
+more_errors, more_warnings = validate(schedule, participants, config)
 errors += more_errors
+warnings += more_warnings
 
 # ---------------------------------------------------------------------- run
-st.subheader("3. Build the schedule")
+st.subheader("4. Build the schedule")
 st.write(f"**{len(participants)}** participants asking for **{sum(p.hours for p in participants)}** "
          f"hours; the schedule has **{len(schedule.needed)}** slots needing **{schedule.capacity}** TA-hours.")
 for w in warnings:
@@ -259,7 +296,7 @@ if stale:
     st.warning("Inputs or options changed since this schedule was built. Press the button again.")
 
 # ------------------------------------------------------------------ results
-st.subheader("4. Results")
+st.subheader("5. Results")
 summary = csv_io.summary_table(participants, result, used_config)
 total = int(summary["hours"].sum())
 ranked = total - int(summary["unranked"].sum())
@@ -298,10 +335,13 @@ with st.expander("Solver details"):
     st.dataframe(pd.DataFrame(result.stages, columns=["stage", "optimal value"]), hide_index=True)
 
 # ------------------------------------------------------------------- send
-st.subheader("5. Send each TA their schedule")
-emails = {r["name"]: r["email"] for r in roster}
+st.subheader("6. Send each TA their schedule")
+emails = roster_emails(roster)
+if not roster:
+    st.info("To email TAs their schedules, load a roster (columns name, hours, email) in section 2.")
+    st.stop()
 if not any(emails.values()):
-    st.info("Load a roster with an 'email' column (section 2) to email TAs their schedules.")
+    st.info("The roster has no email addresses. Fill in its email column to email TAs their schedules.")
     st.stop()
 
 subject = st.text_input("Subject", notify.DEFAULT_SUBJECT)

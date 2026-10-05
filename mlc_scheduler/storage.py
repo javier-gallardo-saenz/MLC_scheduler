@@ -1,7 +1,7 @@
 """Storage for the preference form: a folder of plain files.
 
     <folder>/form_schedule.csv   the schedule TAs choose from (absent = form closed)
-    <folder>/form_settings.json  e.g. the minimum list length
+    <folder>/form_settings.json  minimum list length; where preferences come from
     <folder>/submissions.json    one entry per TA; resubmitting replaces it
     <folder>/roster.json         optional: who works at the MLC, hours, email
 
@@ -43,7 +43,7 @@ class FormStore:
     def open_form(self, schedule_csv: str, min_list_factor: float) -> None:
         with _lock:
             self._write("form_schedule.csv", schedule_csv)
-            self._write("form_settings.json", json.dumps({"min_list_factor": min_list_factor}))
+        self.set_setting("min_list_factor", min_list_factor)
 
     def close_form(self) -> None:
         with _lock:
@@ -56,7 +56,11 @@ class FormStore:
     def settings(self) -> dict:
         path = self._path("form_settings.json")
         saved = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        return {"min_list_factor": 2.0, **saved}
+        return {"min_list_factor": 2.0, "source": "csv", **saved}
+
+    def set_setting(self, name: str, value) -> None:
+        with _lock:
+            self._write("form_settings.json", json.dumps({**self.settings(), name: value}))
 
     # --------------------------------------------------------------- roster
 
@@ -98,26 +102,13 @@ class FormStore:
             rest = [s for s in self.submissions() if key(s["name"]) != key(name)]
             self._write("submissions.json", json.dumps(rest, indent=1))
 
-    def to_csv(self, include_missing: bool = False) -> str:
-        """All submissions in the preferences-CSV format the scheduler reads.
-
-        With a roster, names and hours come from the roster, and
-        `include_missing` adds roster TAs who never submitted (with no
-        preferences, so they get whatever slots are left).
-        """
-        roster = {key(r["name"]): r for r in self.roster()}
+    def to_csv(self) -> str:
+        """All submissions in the preferences-CSV format the scheduler reads."""
         subs = self.submissions()
-        rows = []
-        for s in subs:
-            r = roster.get(key(s["name"]), s)
-            rows.append([r["name"], r["hours"], s["unavailable"], s["submitted"], *s["preferences"]])
-        if include_missing:
-            done = {key(s["name"]) for s in subs}
-            rows += [[r["name"], r["hours"], "", ""] for k, r in roster.items() if k not in done]
-
-        width = max((len(r) - 4 for r in rows), default=0)
+        width = max((len(s["preferences"]) for s in subs), default=0)
         out = io.StringIO()
         w = csv.writer(out, lineterminator="\n")
         w.writerow(["name", "hours", "unavailable", "submitted", *(f"pref{i + 1}" for i in range(width))])
-        w.writerows(rows)
+        for s in subs:
+            w.writerow([s["name"], s["hours"], s["unavailable"], s["submitted"], *s["preferences"]])
         return out.getvalue()

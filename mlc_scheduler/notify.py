@@ -7,11 +7,13 @@ optionally sender (defaults to user). Port 465 uses SSL; anything else
 """
 from __future__ import annotations
 
+import csv
 import smtplib
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
 from email.message import EmailMessage
+from pathlib import Path
 
 from .models import Schedule, Slot, fmt_time, name_key
 
@@ -103,6 +105,33 @@ def compose(
     return out
 
 
+def to_message(e: Email, sender: str = "") -> EmailMessage:
+    msg = EmailMessage()
+    if sender:
+        msg["From"] = sender
+    msg["To"], msg["Subject"] = e.to, e.subject
+    msg.set_content(e.body)
+    if e.calendar:
+        msg.add_attachment(e.calendar.encode(), maintype="text", subtype="calendar",
+                           filename="mlc_schedule.ics")
+    return msg
+
+
+def save_drafts(emails: list[Email], folder: Path, sender: str = "") -> None:
+    """Writes each email as an .eml file (opens in Outlook, Apple Mail, Thunderbird)
+    plus emails.csv (name, email, subject, body) for a mail merge."""
+    folder.mkdir(parents=True, exist_ok=True)
+    for e in emails:
+        safe = "".join(c if c.isalnum() else "_" for c in e.name)
+        msg = to_message(e, sender)
+        msg["X-Unsent"] = "1"  # Outlook opens it as a draft, ready to send
+        (folder / f"{safe}.eml").write_bytes(bytes(msg))
+    with open(folder / "emails.csv", "w", newline="", encoding="utf-8") as f:
+        w = csv.writer(f)
+        w.writerow(["name", "email", "subject", "body"])
+        w.writerows([e.name, e.to, e.subject, e.body] for e in emails)
+
+
 def send(emails: list[Email], smtp: dict, on_sent=None) -> dict[str, str]:
     """Sends every email over one SMTP connection. Returns name -> "sent" or the error.
 
@@ -117,14 +146,8 @@ def send(emails: list[Email], smtp: dict, on_sent=None) -> dict[str, str]:
             server.starttls()
         server.login(smtp["user"], smtp["password"])
         for i, e in enumerate(emails):
-            msg = EmailMessage()
-            msg["From"], msg["To"], msg["Subject"] = sender, e.to, e.subject
-            msg.set_content(e.body)
-            if e.calendar:
-                msg.add_attachment(e.calendar.encode(), maintype="text", subtype="calendar",
-                                   filename="mlc_schedule.ics")
             try:
-                server.send_message(msg)
+                server.send_message(to_message(e, sender))
                 results[e.name] = "sent"
             except smtplib.SMTPException as err:
                 results[e.name] = f"failed: {err}"
