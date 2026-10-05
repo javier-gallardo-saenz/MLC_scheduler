@@ -244,3 +244,76 @@ def test_form_store(tmp_path):
     store.delete("Bo")
     store.close_form()
     assert [s["name"] for s in store.submissions()] == ["ana ruiz"] and store.schedule_path() is None
+
+
+def test_roster_drives_hours_and_includes_non_submitters(tmp_path):
+    from mlc_scheduler.storage import FormStore
+    roster, errors = csv_io.read_roster(io.StringIO(
+        "name,hours,email\nAna Ruiz,1,ana@x.ca\nBo,2,bo@x.ca\nCy,1,\n"))
+    assert not errors and roster[2] == {"name": "Cy", "hours": 1, "email": ""}
+    _, errors = csv_io.read_roster(io.StringIO("name,hours,email\nA,1,nope\na,2,\n"))
+    assert len(errors) == 2  # bad address + duplicate
+
+    store = FormStore(tmp_path)
+    store.set_roster(roster)
+    store.save("ana ruiz", 5, "", ["Mon 12:00"])  # hours on the roster win
+    sched = make_schedule({"Mon 12:00": 1, "Mon 13:00": 1, "Tue 12:00": 2})
+    people, _ = csv_io.read_participants(io.StringIO(store.to_csv()), sched)
+    assert [(p.name, p.hours) for p in people] == [("Ana Ruiz", 1)]
+    people, _ = csv_io.read_participants(io.StringIO(store.to_csv(include_missing=True)), sched)
+    assert [(p.name, p.hours, len(p.preferences)) for p in people] == [
+        ("Ana Ruiz", 1, 1), ("Bo", 2, 0), ("Cy", 1, 0)]
+
+    # no list at all is only a warning; they fill the leftovers
+    errors, warnings = validate(sched, people, Config(min_list_factor=1))
+    assert not errors and any("Bo: ranked no slots" in w for w in warnings)
+    res = run(sched, people, Config(seed=0))
+    assert res.assignment["Ana Ruiz"] == [S("Mon 12:00")]
+
+
+def test_emails_and_calendar():
+    from datetime import date
+    from mlc_scheduler import notify
+    sched = make_schedule({"Mon 12:00": 1, "Wed 13:30": 1, "Fri 12:00": 1})
+    assignment = {"Ana": [S("Wed 13:30"), S("Mon 12:00")], "Bo": [S("Fri 12:00")]}
+    msgs = notify.compose(sched, assignment, {"ana": "ana@x.ca", "Bo": ""},
+                          subject="Shifts for {name}", term=(date(2026, 9, 2), date(2026, 12, 5)))
+    assert [m.name for m in msgs] == ["Ana"]  # Bo has no address
+    (m,) = msgs
+    assert m.to == "ana@x.ca" and m.subject == "Shifts for Ana"
+    assert "(2 hours per week)" in m.body
+    assert "  Mon 12:00-13:00\n  Wed 13:30-14:30" in m.body
+    # 2026-09-02 is a Wednesday: first Wed shift that day, first Mon shift on Sep 7
+    assert "DTSTART:20260902T133000" in m.calendar and "DTEND:20260902T143000" in m.calendar
+    assert "DTSTART:20260907T120000" in m.calendar
+    assert m.calendar.count("RRULE:FREQ=WEEKLY;UNTIL=20261205T235959") == 2
+
+
+def test_send_uses_one_smtp_session(monkeypatch):
+    from mlc_scheduler import notify
+    log = []
+
+    class FakeSMTP:
+        def __init__(self, host, port, timeout):
+            log.append(("connect", host, port))
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            log.append(("quit",))
+        def starttls(self):
+            log.append(("starttls",))
+        def login(self, user, password):
+            log.append(("login", user))
+        def send_message(self, msg):
+            if msg["To"] == "bad@x.ca":
+                raise notify.smtplib.SMTPRecipientsRefused({})
+            log.append(("send", msg["From"], msg["To"], msg["Subject"],
+                        [p.get_filename() for p in msg.iter_attachments()]))
+
+    monkeypatch.setattr(notify.smtplib, "SMTP", FakeSMTP)
+    emails = [notify.Email("Ana", "ana@x.ca", "Hi", "body", calendar="BEGIN:VCALENDAR"),
+              notify.Email("Bo", "bad@x.ca", "Hi", "body")]
+    result = notify.send(emails, {"host": "smtp.x.ca", "port": 587, "user": "mlc@x.ca", "password": "pw"})
+    assert result["Ana"] == "sent" and result["Bo"].startswith("failed")
+    assert log == [("connect", "smtp.x.ca", 587), ("starttls",), ("login", "mlc@x.ca"),
+                   ("send", "mlc@x.ca", "ana@x.ca", "Hi", ["mlc_schedule.ics"]), ("quit",)]

@@ -31,24 +31,60 @@ python -m mlc_scheduler examples/schedule.csv examples/preferences.csv \
     --grievances examples/grievances.csv --mode tiered --tiers 6 4 --seed 1 --out results
 ```
 
-## Collecting preferences with the form
+## A term, step by step
 
-1. On **Build schedule**, upload the MLC schedule and press **Open the form**.
-   The form offers the slots of that schedule and asks for the sidebar's minimum
+1. **Roster** (optional, recommended). On **Build schedule**, upload a roster
+   CSV with one row per TA: `name,hours,email` (see
+   [examples/roster.csv](examples/roster.csv)) and press **Use this roster**.
+2. **Open the form.** Upload the MLC schedule and press **Open the form**. The
+   form offers the slots of that schedule and asks for the sidebar's minimum
    list length.
-2. Send TAs the app's link. On **Submit preferences** each TA enters their name
-   and hours, the days and times they can't work (e.g. their classes), and then
-   picks slots one by one, favourite first. A timetable preview shows their
-   ranking, and the form won't submit until the list is long enough and doesn't
-   clash with their busy times. Submitting again under the same name (case and
-   spacing don't matter) replaces the earlier answers.
-3. Back on **Build schedule**, the submissions are used automatically (an
-   uploaded preferences file takes priority). You can view and delete
-   submissions, download them as a preferences CSV, and **Close the form**.
+3. **TAs fill in the form.** Send them the app's link. On **Submit preferences**:
+   * with a roster, a TA picks their name from a list and is told their weekly
+     hours and how many slots to rank. Without one, they type their name and hours;
+   * they enter the days and times they can't work (e.g. their classes);
+   * they pick slots one by one, favourite first. A timetable preview shows
+     their ranking, and the form won't submit until the list is long enough
+     and doesn't clash with their busy times.
 
-Submissions are stored as plain files in `data/` (or the folder in the
-`MLC_DATA_DIR` environment variable). See [Sharing the app](#sharing-the-app)
-before hosting it.
+   Submitting again under the same name (case and spacing don't matter)
+   replaces the earlier answers.
+4. **Build.** Back on **Build schedule**, the submissions are used
+   automatically (an uploaded preferences file takes priority). You can see
+   who on the roster hasn't submitted yet, view and delete submissions,
+   download them as a preferences CSV, and **Close the form**. With a roster,
+   the roster's hours are used, and you can choose to also schedule TAs who
+   never submitted. They get whatever slots are left once everyone else is placed.
+5. **Send everyone their schedule.** Under *Send each TA their schedule*, edit
+   the subject and message (`{name}`, `{hours}` and `{schedule}` are filled in
+   per TA), preview each email, and optionally attach a **calendar file**:
+   a weekly repeating event per shift between the term's first and last day,
+   which TAs can open to add their shifts to Google Calendar, Outlook, etc.
+   To send from the app, set up an email account (see below). Otherwise,
+   download all emails as a CSV for a mail merge.
+
+The roster, form and submissions are stored as plain files in `data/` (or the
+folder in the `MLC_DATA_DIR` environment variable). See
+[Sharing the app](#sharing-the-app) before hosting it.
+
+### Email account for sending
+
+Add the account to `.streamlit/secrets.toml` (or the hosting service's
+secrets settings), next to the admin password:
+
+```toml
+[smtp]
+host = "smtp.gmail.com"        # your provider's SMTP server
+port = 587                     # 587 = STARTTLS, 465 = SSL
+user = "mlc.scheduling@gmail.com"
+password = "app password"      # for Gmail: an app password, not the normal one
+sender = "UBC MLC <mlc.scheduling@gmail.com>"   # optional, defaults to user
+```
+
+Sending asks you to confirm the schedule is final, sends one email per TA
+(TAs without an email on the roster are listed so you can contact them
+separately), and reports any that failed. The button then locks, so the same
+schedule can't be sent twice by accident.
 
 ## Input files
 
@@ -191,7 +227,8 @@ mlc_scheduler/
   optimizer.py             the MILP (PuLP + HiGHS) and its lexicographic stages
   grievance.py             tie detection and grievance bookkeeping
   scheduler.py             run(): ties everything together
-  storage.py               where the form keeps the schedule and submissions
+  storage.py               where the form keeps the roster, schedule and submissions
+  notify.py                emails and calendar files for each TA
   __main__.py              command-line interface
 examples/                  sample inputs + generator
 tests/                     pytest suite  (python -m pytest)
@@ -223,5 +260,5 @@ Google Sheet). Only that one class would need to change.
 ## Possible extensions
 
 * Let a TA see and edit their previous submission instead of starting over.
-* Load a roster (names + hours) so the form offers a name list instead of free text.
+* Personal form links per TA (so nobody can submit under someone else's name).
 * A persistent storage backend for free hosting (see above).

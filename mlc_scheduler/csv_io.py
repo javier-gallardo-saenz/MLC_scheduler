@@ -19,6 +19,8 @@ preferences CSV - one row per participant: name, hours, then the ranked slots
 
 grievances CSV - name,grievance  (optional; missing names start at 0)
 
+roster CSV - name,hours[,email]  (optional; who works at the MLC this term)
+
 All readers accept a path or a file-like object (e.g. a Streamlit upload).
 """
 from __future__ import annotations
@@ -141,6 +143,33 @@ def read_grievances(src) -> dict[str, int]:
         for _, row in df.iterrows()
         if row[lower["name"]]
     }
+
+
+def read_roster(src) -> tuple[list[dict], list[str]]:
+    """Returns ([{name, hours, email}, ...], errors)."""
+    df = _read(src)
+    lower = {c.lower(): c for c in df.columns}
+    if "name" not in lower or "hours" not in lower:
+        raise ValueError("roster CSV needs 'name' and 'hours' columns (and optionally 'email')")
+    roster, errors, seen = [], [], set()
+    for _, row in df.iterrows():
+        name = " ".join(row[lower["name"]].split())
+        if not name:
+            continue
+        if name.casefold() in seen:
+            errors.append(f"{name}: appears more than once in the roster")
+            continue
+        seen.add(name.casefold())
+        try:
+            hours = int(float(row[lower["hours"]]))
+        except ValueError:
+            errors.append(f"{name}: hours {row[lower['hours']]!r} is not a number")
+            continue
+        email = row[lower["email"]] if "email" in lower else ""
+        if email and "@" not in email:
+            errors.append(f"{name}: {email!r} is not an email address")
+        roster.append({"name": name, "hours": hours, "email": email})
+    return roster, errors
 
 
 # ---------------------------------------------------------------- outputs

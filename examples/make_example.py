@@ -1,4 +1,4 @@
-"""Generate a realistic random example (schedule, preferences, grievances).
+"""Generate a realistic random example (schedule, preferences, grievances, roster).
 
     python examples/make_example.py [n_participants] [seed]
 """
@@ -82,6 +82,12 @@ def main(n: int = 40, seed: int = 0) -> None:
         w.writerow(["name", "grievance"])
         for k in range(n):
             w.writerow([f"TA{k + 1:02d}", rng.choice([0, 0, 0, 1, 2])])
+
+    with open(HERE / "roster.csv", "w", newline="") as f:
+        w = csv.writer(f)
+        w.writerow(["name", "hours", "email"])
+        for k, h in enumerate(hours):
+            w.writerow([f"TA{k + 1:02d}", h, f"ta{k + 1:02d}@example.com"])
 
     print(f"{n} participants, {capacity} TA-slots -> {HERE}")
 

@@ -29,10 +29,19 @@ st.write(
 
 # --------------------------------------------------------------- about you
 st.subheader("1. About you")
-c1, c2 = st.columns([3, 1])
-name = c1.text_input("Full name", help="Use the same name if you submit again; "
-                                       "a new submission replaces the old one.")
-hours = c2.number_input("Hours per week", 1, 20, 2)
+roster = {r["name"]: r["hours"] for r in store.roster()}
+if roster:  # the MLC has said who works and how much: pick your name
+    name = st.selectbox("Your name", list(roster), index=None, placeholder="Select your name",
+                        help="Not on the list? Contact the MLC.") or ""
+    hours = roster.get(name, 1)
+    if name:
+        st.info(f"You are working **{hours} hour{'s' * (hours != 1)} per week**, so please "
+                f"rank at least **{math.ceil(factor * hours)}** slots below.")
+else:
+    c1, c2 = st.columns([3, 1])
+    name = c1.text_input("Full name", help="Use the same name if you submit again; "
+                                           "a new submission replaces the old one.")
+    hours = c2.number_input("Hours per week", 1, 20, 2)
 previous = store.get(name) if name.strip() else None
 if previous:
     st.info(f"We already have a submission from **{previous['name']}** "
@@ -86,7 +95,7 @@ st.dataframe(grid, width="stretch", height=36 * (len(grid) + 1) + 2)
 
 # ------------------------------------------------------------------ submit
 if not name.strip():
-    problems.insert(0, "Enter your name.")
+    problems.insert(0, "Select your name." if roster else "Enter your name.")
 for p in problems:
     st.warning(p)
 if st.button("Submit preferences", type="primary", disabled=bool(problems)):

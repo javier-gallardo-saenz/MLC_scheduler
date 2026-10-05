@@ -1,12 +1,15 @@
 """Admin page: manage the preference form and build the schedule."""
 import hmac
 import io
+import smtplib
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
-from mlc_scheduler import Config, SchedulingError, csv_io, run
+from mlc_scheduler import Config, SchedulingError, csv_io, notify, run
+from mlc_scheduler.models import name_key
 from mlc_scheduler.storage import FormStore
 from mlc_scheduler.validation import validate
 
@@ -20,14 +23,14 @@ st.caption(
 )
 
 
-def admin_password() -> str | None:
+def secret(name: str):
     try:
-        return st.secrets.get("admin_password")
-    except Exception:  # no secrets file: running locally, no password
+        return st.secrets.get(name)
+    except Exception:  # no secrets file: running locally
         return None
 
 
-password = admin_password()
+password = secret("admin_password")
 if password and not st.session_state.get("admin_ok"):
     entered = st.text_input("Admin password", type="password")
     if not hmac.compare_digest(entered.encode(), password.encode()):
@@ -87,10 +90,11 @@ with st.expander("File formats & templates"):
         "  An optional `unavailable` column lists, separated by `;`, whole days (`Fri`), single slots "
         "(`Mon 12:30`) or busy times (`Tue 13:00-14:30`, which rules out every slot overlapping it). "
         "Those slots are never assigned to that TA.\n"
-        "- **Grievance points**: `name,grievance`. Use the file produced by the previous run."
+        "- **Grievance points**: `name,grievance`. Use the file produced by the previous run.\n"
+        "- **Roster** (section 2): `name,hours,email`, one row per TA working this term."
     )
-    d1, d2, d3 = st.columns(3)
-    for col, f in zip((d1, d2, d3), ("schedule.csv", "preferences.csv", "grievances.csv")):
+    files = ("schedule.csv", "preferences.csv", "grievances.csv", "roster.csv")
+    for col, f in zip(st.columns(len(files)), files):
         col.download_button(f"Example {f}", (EXAMPLES / f).read_bytes(), f, "text/csv")
 
 
@@ -103,16 +107,13 @@ def pick(upload, fallbacks):
 
 
 submissions = store.submissions()
+roster = store.roster()
 src_schedule, why_schedule = pick(up_schedule, [
     (store.schedule_path(), "the schedule the form is using", store.schedule_path() is not None),
     (EXAMPLES / "schedule.csv", "example data", use_example),
 ])
-src_prefs, why_prefs = pick(up_prefs, [
-    (io.StringIO(store.to_csv()), f"the {len(submissions)} form submissions", bool(submissions)),
-    (EXAMPLES / "preferences.csv", "example data", use_example),
-])
 src_griev, why_griev = pick(up_griev, [(EXAMPLES / "grievances.csv", "example data", use_example)])
-for col, why in zip((c1, c2, c3), (why_schedule, why_prefs, why_griev)):
+for col, why in zip((c1, c3), (why_schedule, why_griev)):
     if why:
         col.caption(f"Using {why}.")
 
@@ -125,14 +126,53 @@ except ValueError as e:
     st.error(f"Could not read the schedule: {e}")
     st.stop()
 
-# ------------------------------------------------------------------- form
-st.subheader("2. Preference form")
+# ----------------------------------------------------------- roster & form
+st.subheader("2. Roster and preference form")
+st.markdown("**Roster**")
+up_roster = st.file_uploader(
+    "Roster (name, hours, email)", type="csv",
+    help="Who works at the MLC this term. With a roster, TAs pick their name on the form "
+         "and are told their hours, and their schedules can be emailed to them.")
+if up_roster is not None:
+    up_roster.seek(0)
+    try:
+        new_roster, roster_errors = csv_io.read_roster(up_roster)
+    except ValueError as e:
+        new_roster, roster_errors = [], [str(e)]
+    if roster_errors:
+        st.error("Problems in the roster:\n\n" + "\n".join(f"- {e}" for e in roster_errors))
+    elif new_roster != roster and st.button(f"Use this roster ({len(new_roster)} TAs)"):
+        store.set_roster(new_roster)
+        st.rerun()
+
+done = {name_key(s["name"]) for s in submissions}
+missing = [r["name"] for r in roster if name_key(r["name"]) not in done]
+if roster:
+    st.write(
+        f"**{len(roster)}** TAs on the roster, working **{sum(r['hours'] for r in roster)}** hours "
+        f"per week ({schedule.capacity} TA-hours needed); "
+        f"{sum(bool(r['email']) for r in roster)} have an email address. "
+        f"**{len(roster) - len(missing)}** have submitted their preferences."
+    )
+    with st.expander("Roster"):
+        st.dataframe(pd.DataFrame([{**r, "submitted": name_key(r["name"]) in done} for r in roster]),
+                     hide_index=True, width="stretch")
+        if st.button("Remove roster"):
+            store.clear_roster()
+            st.rerun()
+    on_roster = {name_key(r["name"]) for r in roster}
+    strangers = [s["name"] for s in submissions if name_key(s["name"]) not in on_roster]
+    if strangers:
+        st.warning(f"Submitted but not on the roster: {', '.join(strangers)}. "
+                   "They are scheduled with the hours they entered (delete them below if needed).")
+
+st.markdown("**Preference form**")
 form_open = store.schedule_path() is not None
 schedule_csv = csv_io.schedule_to_csv(schedule)
 if form_open:
     st.success(f"The form is **open**: TAs submit on the *Submit preferences* page. "
                f"{len(submissions)} submissions so far.")
-    if store.schedule_path().read_text(encoding="utf-8") != schedule_csv:
+    if csv_io.read_schedule(store.schedule_path()).needed != schedule.needed:
         st.warning("The form is offering a different schedule from the one loaded above.")
     if store.settings()["min_list_factor"] != min_factor:
         st.warning("The form asks for a different minimum list length from the one in the sidebar.")
@@ -159,6 +199,22 @@ if submissions:
             store.delete(who)
             st.rerun()
         g3.download_button("Download as preferences CSV", store.to_csv(), "preferences.csv", "text/csv")
+
+include_missing = False
+if roster and missing:
+    include_missing = st.checkbox(
+        f"Also schedule the {len(missing)} roster TAs who haven't submitted", value=True,
+        help="They get whatever slots are left once everyone else is placed "
+             f"(still missing: {', '.join(missing)})")
+
+src_prefs, why_prefs = pick(up_prefs, [
+    (io.StringIO(store.to_csv(include_missing)),
+     f"the {len(submissions)} form submissions" + (f" + {len(missing)} roster TAs without one" if include_missing else ""),
+     bool(submissions) or include_missing),
+    (EXAMPLES / "preferences.csv", "example data", use_example),
+])
+if why_prefs:
+    c2.caption(f"Using {why_prefs}.")
 
 if src_prefs is None:
     st.info("Waiting for preferences: collect them with the form, or upload a preferences file.")
@@ -198,7 +254,8 @@ if st.button("Build schedule", type="primary"):
 if "result" not in st.session_state:
     st.stop()
 result, used_config = st.session_state.result
-if set(result.assignment) != {p.name for p in participants} or used_config != config:
+stale = set(result.assignment) != {p.name for p in participants} or used_config != config
+if stale:
     st.warning("Inputs or options changed since this schedule was built. Press the button again.")
 
 # ------------------------------------------------------------------ results
@@ -239,3 +296,75 @@ b2.download_button("Assignments per TA (CSV)", assignments.to_csv(index=False), 
 b3.download_button("Updated grievance points (CSV)", griev_out.to_csv(index=False), "grievances.csv", "text/csv")
 with st.expander("Solver details"):
     st.dataframe(pd.DataFrame(result.stages, columns=["stage", "optimal value"]), hide_index=True)
+
+# ------------------------------------------------------------------- send
+st.subheader("5. Send each TA their schedule")
+emails = {r["name"]: r["email"] for r in roster}
+if not any(emails.values()):
+    st.info("Load a roster with an 'email' column (section 2) to email TAs their schedules.")
+    st.stop()
+
+subject = st.text_input("Subject", notify.DEFAULT_SUBJECT)
+body = st.text_area("Message", notify.DEFAULT_BODY, height=230,
+                    help="{name}, {hours} and {schedule} are filled in for each TA")
+term = None
+if st.checkbox("Attach a calendar file", value=True,
+               help="an .ics file with a weekly repeating event per shift, which TAs can "
+                    "open to add their shifts to Google Calendar, Outlook, ..."):
+    e1, e2 = st.columns(2)
+    first = e1.date_input("First day of shifts", date.today())
+    last = e2.date_input("Last day of shifts", date.today() + timedelta(weeks=13))
+    if last < first:
+        st.error("The last day is before the first day.")
+        st.stop()
+    term = (first, last)
+try:
+    messages = notify.compose(schedule, result.assignment, emails, subject, body, term)
+except ValueError:
+    st.error("Calendar files need weekday names (Mon, Tue, ...) as the schedule's days.")
+    st.stop()
+
+no_email = sorted(set(result.assignment) - {m.name for m in messages})
+if no_email:
+    st.warning(f"No email address on the roster for: {', '.join(no_email)}")
+if not messages:
+    st.stop()
+
+with st.expander("Preview"):
+    shown = st.selectbox("TA", [m.name for m in messages])
+    m = next(m for m in messages if m.name == shown)
+    st.text(f"To: {m.to}\nSubject: {m.subject}" + ("\nAttachment: mlc_schedule.ics" if m.calendar else "")
+            + f"\n\n{m.body}")
+
+mail_merge = pd.DataFrame([{"name": m.name, "email": m.to, "subject": m.subject, "body": m.body}
+                           for m in messages]).to_csv(index=False)
+smtp = secret("smtp")
+if not smtp:
+    st.info("To send the emails from here, add an email account to the app's secrets "
+            "(see the README). Meanwhile you can download them for a mail merge.")
+    st.download_button("Download emails (CSV)", mail_merge, "emails.csv", "text/csv")
+    st.stop()
+
+already = st.session_state.get("sent_for") is result
+sender = smtp.get("sender") or smtp.get("user")
+confirm = st.checkbox(f"The schedule is final: send {len(messages)} emails from {sender}",
+                      disabled=stale or already)
+if already:
+    st.caption("These schedules were already sent. Build the schedule again to send new ones.")
+if st.button("Send emails", type="primary", disabled=not confirm or stale or already):
+    bar = st.progress(0.0, "Sending...")
+    try:
+        sent = notify.send(messages, dict(smtp),
+                           on_sent=lambda i, _: bar.progress((i + 1) / len(messages), "Sending..."))
+    except (smtplib.SMTPException, OSError) as e:
+        st.error(f"Could not connect to the email server: {e}")
+    else:
+        st.session_state.sent_for, st.session_state.sent = result, sent
+        st.rerun()
+if already:
+    report = st.session_state.sent
+    failed = {n: r for n, r in report.items() if r != "sent"}
+    (st.warning if failed else st.success)(f"Sent {len(report) - len(failed)} of {len(report)} emails.")
+    if failed:
+        st.dataframe(pd.DataFrame(failed.items(), columns=["name", "error"]), hide_index=True)
+st.download_button("Download emails (CSV)", mail_merge, "emails.csv", "text/csv")

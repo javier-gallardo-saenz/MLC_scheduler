@@ -132,6 +132,11 @@ class Result:
     stages: list[tuple[str, float]]  # (stage name, optimal objective value)
 
 
+def name_key(name: str) -> str:
+    """Names match regardless of case and spacing."""
+    return " ".join(name.split()).casefold()
+
+
 def fmt_time(minutes: int) -> str:
     return f"{minutes // 60:02d}:{minutes % 60:02d}"
 
