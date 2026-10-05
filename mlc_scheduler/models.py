@@ -33,6 +33,7 @@ class Participant:
     hours: int
     preferences: list[Slot]  # ordered, most wanted first
     grievance: int = 0
+    unavailable: set[Slot] = field(default_factory=set)  # never assigned
 
     def rank_of(self, slot: Slot) -> int | None:
         """1-based position of `slot` in the preference list, or None if unranked."""

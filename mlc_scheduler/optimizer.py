@@ -5,6 +5,7 @@ Variables
 
 Hard constraints
     * every participant gets exactly their number of hours,
+    * nobody works a slot they marked as unavailable,
     * no slot gets more TAs than it needs,
     * nobody works two overlapping slots (e.g. Mon 12:00 and Mon 12:30).
 
@@ -60,6 +61,9 @@ def build_model(schedule: Schedule, participants: list[Participant]):
     }
     for i, p in enumerate(participants):
         prob += pulp.lpSum(x[p.name, s] for s in slots) == p.hours, f"hours_{i}"
+        for j, s in enumerate(slots):
+            if s in p.unavailable:
+                prob += x[p.name, s] == 0, f"unavailable_{i}_{j}"
     for j, s in enumerate(slots):
         prob += pulp.lpSum(x[p.name, s] for p in participants) <= schedule.needed[s], f"need_{j}"
 
@@ -121,7 +125,7 @@ def solve(
             raise SchedulingError(
                 f"no feasible schedule ({pulp.LpStatus[prob.status]}) at stage "
                 f"'{name}'. Check that hours fit the schedule, and that nobody "
-                "has more hours than non-overlapping slots allow."
+                "has more hours than their available, non-overlapping slots allow."
             )
         value = pulp.value(expr) or 0.0
         history.append((name, value))

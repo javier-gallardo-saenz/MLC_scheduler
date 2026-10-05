@@ -46,9 +46,21 @@ time,Mon,Tue,Wed,Thu,Fri
 slots from most to least wanted. Any number of columns; blanks are ignored.
 Days can be written `Mon` or `Monday`, times `12:30` or `12`.
 
+An optional `unavailable` column lists times the TA **cannot** work, separated
+by `;`. Each entry is one of:
+
+* a whole day: `Fri`
+* a single slot: `Mon 12:30`
+* a busy time range: `Tue 13:00-14:30`. This rules out *every* slot that
+  overlaps it, here Tue 12:30, 13:00, 13:30 and 14:00.
+
+Unavailable slots are never assigned to that TA. Unranked but available slots
+can still be assigned if the schedule needs them.
+
 ```
-name,hours,pref1,pref2,pref3,...
-Alice,4,Mon 12:00,Wed 14:30,Tue 13:00,...
+name,hours,unavailable,pref1,pref2,pref3,...
+Alice,4,Tue 13:00-14:30; Fri,Mon 12:00,Wed 14:30,Tue 15:00,...
+Bob,2,,Wed 12:00,Thu 16:30,Mon 17:00,...
 ```
 
 **Grievance points** (`grievances.csv`, optional): `name,grievance`. Use the file
@@ -68,7 +80,12 @@ carried over unchanged.
 **Variables:** `x[p, s] = 1` if TA `p` works slot `s`.
 
 **Hard constraints:** each TA gets exactly their hours; no slot gets more TAs
-than it needs; no TA works two overlapping slots.
+than it needs; no TA works two overlapping slots; no TA works a slot they marked
+unavailable.
+
+Before solving, the inputs are checked. A slot that is both ranked and
+unavailable is an error. So is a TA whose hours don't fit around their busy
+times, or a set of slots that too few TAs are free for.
 
 **Cost of a slot for a TA:** `rank ** e`, where `rank` is its position in the
 TA's list (1 = favourite) and `e` is the *rank exponent* (default 1). A slot the
@@ -152,6 +169,5 @@ point it at this repository and `app.py`. Then MLC staff only need a browser.
 
 ## Possible extensions
 
-* Let TAs mark slots they **cannot** work (currently an unranked slot can still be assigned).
 * Limits such as a maximum number of hours per day, or preferring back-to-back shifts.
 * Collect preferences with a form (e.g. Google Forms) that exports straight to the preferences CSV.

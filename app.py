@@ -62,12 +62,15 @@ c1, c2, c3 = st.columns(3)
 up_schedule = c1.file_uploader("MLC schedule", type="csv",
                                help="grid: first column = start time, one column per day, cells = TAs needed")
 up_prefs = c2.file_uploader("Preferences", type="csv",
-                            help="name, hours, then ranked slots like 'Mon 12:30'")
+                            help="name, hours, optional 'unavailable' column, then ranked slots like 'Mon 12:30'")
 up_griev = c3.file_uploader("Grievance points (optional)", type="csv", help="name, grievance")
 with st.expander("File formats & templates"):
     st.markdown(
         "- **Schedule**: `time,Mon,Tue,...` then rows like `12:30,1,1,2,1,1`. Every slot lasts one hour; blank/0 = no slot.\n"
         "- **Preferences**: `name,hours,pref1,pref2,...` then rows like `Alice,4,Mon 12:00,Wed 14:30,...` (best first).\n"
+        "  An optional `unavailable` column lists, separated by `;`, whole days (`Fri`), single slots "
+        "(`Mon 12:30`) or busy times (`Tue 13:00-14:30`, which rules out every slot overlapping it). "
+        "Those slots are never assigned to that TA.\n"
         "- **Grievance points**: `name,grievance`. Use the file produced by the previous run."
     )
     d1, d2, d3 = st.columns(3)

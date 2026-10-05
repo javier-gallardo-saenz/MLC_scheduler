@@ -12,6 +12,10 @@ preferences CSV - one row per participant: name, hours, then the ranked slots
                   in order (any number of columns, blanks ignored):
                    name,hours,pref1,pref2,pref3,...
                    Alice,4,Mon 12:00,Wed 14:30,...
+                  An optional 'unavailable' column lists, separated by ';',
+                  whole days ('Fri'), single slots ('Mon 12:30') or busy
+                  time ranges ('Tue 13:00-14:30', blocks every slot that
+                  overlaps it). Those slots are never assigned to that TA.
 
 grievances CSV - name,grievance  (optional; missing names start at 0)
 
@@ -46,19 +50,44 @@ def read_schedule(src) -> Schedule:
     return Schedule(needed=needed, days=days, times=times)
 
 
+def parse_day(word: str, schedule: Schedule, text: str) -> str:
+    """'mon', 'Monday' -> 'Mon' (whatever spelling the schedule uses)."""
+    matches = [d for d in schedule.days if d.lower()[:3] == word.lower()[:3]]
+    if len(matches) != 1:
+        raise ValueError(f"unknown day in {text!r}")
+    return matches[0]
+
+
 def parse_slot(text: str, schedule: Schedule) -> Slot:
     """'Mon 12:30', 'monday 12:30' or 'Mon 12' -> Slot (must exist in the schedule)."""
     parts = text.split()
     if len(parts) != 2:
         raise ValueError(f"cannot read slot {text!r} (expected e.g. 'Mon 12:30')")
     word, time = parts
-    matches = [d for d in schedule.days if d.lower()[:3] == word.lower()[:3]]
-    if len(matches) != 1:
-        raise ValueError(f"unknown day in slot {text!r}")
-    slot = Slot(matches[0], parse_time(time))
+    slot = Slot(parse_day(word, schedule, text), parse_time(time))
     if slot not in schedule.needed:
         raise ValueError(f"slot {text!r} is not in the MLC schedule")
     return slot
+
+
+def parse_unavailable(text: str, schedule: Schedule) -> set[Slot]:
+    """'Fri; Mon 12:30; Tue 13:00-14:30' -> the set of slots that are ruled out."""
+    blocked = set()
+    for entry in filter(None, (e.strip() for e in text.split(";"))):
+        parts = entry.split()
+        if len(parts) == 1:  # whole day
+            day = parse_day(parts[0], schedule, entry)
+            blocked |= {s for s in schedule.needed if s.day == day}
+        elif "-" in parts[1]:  # busy time range: block every overlapping slot
+            day = parse_day(parts[0], schedule, entry)
+            start, _, end = parts[1].partition("-")
+            a, b = parse_time(start), parse_time(end)
+            if a >= b:
+                raise ValueError(f"time range {entry!r} ends before it starts")
+            blocked |= {s for s in schedule.needed if s.day == day and s.start < b and a < s.end}
+        else:
+            blocked.add(parse_slot(entry, schedule))
+    return blocked
 
 
 def read_participants(src, schedule: Schedule) -> tuple[list[Participant], list[str]]:
@@ -67,7 +96,8 @@ def read_participants(src, schedule: Schedule) -> tuple[list[Participant], list[
     lower = {c.lower(): c for c in df.columns}
     if "name" not in lower or "hours" not in lower:
         raise ValueError("preferences CSV needs 'name' and 'hours' columns")
-    pref_cols = [c for c in df.columns if c not in (lower["name"], lower["hours"])]
+    unavail_col = lower.get("unavailable")
+    pref_cols = [c for c in df.columns if c not in (lower["name"], lower["hours"], unavail_col)]
 
     participants, errors = [], []
     for i, row in df.iterrows():
@@ -87,7 +117,13 @@ def read_participants(src, schedule: Schedule) -> tuple[list[Participant], list[
                 prefs.append(parse_slot(row[col], schedule))
             except ValueError as e:
                 errors.append(f"{name}: {e}")
-        participants.append(Participant(name, hours, prefs))
+        unavailable = set()
+        if unavail_col and row[unavail_col]:
+            try:
+                unavailable = parse_unavailable(row[unavail_col], schedule)
+            except ValueError as e:
+                errors.append(f"{name}: unavailable: {e}")
+        participants.append(Participant(name, hours, prefs, unavailable=unavailable))
     return participants, errors
 
 
@@ -151,6 +187,7 @@ def summary_table(participants: list[Participant], result: Result, config: Confi
             "ranks received": " ".join(str(r) for r in ranked) + " -" * (len(ranks) - len(ranked)),
             "in top choices": sum(r <= p.hours for r in ranked),
             "unranked": len(ranks) - len(ranked),
+            "unavailable slots": len(p.unavailable),
             "grievance before": result.grievance_before.get(p.name, 0),
             "grievance after": result.grievance_after.get(p.name, 0),
         })

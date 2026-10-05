@@ -148,3 +148,45 @@ def test_example_files_run():
     assert filled == sum(p.hours for p in people)
     grid = csv_io.schedule_grid(sched, res.assignment)
     assert list(grid.columns) == ["time", *sched.days]
+
+
+def test_parse_unavailable():
+    sched = csv_io.read_schedule(io.StringIO(
+        "time,Mon,Tue\n12:00,1,1\n12:30,1,1\n13:00,1,1\n13:30,1,1\n14:00,1,1\n"
+    ))
+    got = csv_io.parse_unavailable("Tue; mon 13:00-14:00 ;Mon 12:00", sched)
+    # the 13:00-14:00 class also rules out the slots starting 12:30 and 13:30
+    assert got == {S(f"Tue {t}") for t in ("12:00", "12:30", "13:00", "13:30", "14:00")} | {
+        S("Mon 12:00"), S("Mon 12:30"), S("Mon 13:00"), S("Mon 13:30")}
+    with pytest.raises(ValueError):
+        csv_io.parse_unavailable("Mon 14:00-13:00", sched)
+
+    people, errors = csv_io.read_participants(io.StringIO(
+        "name,hours,unavailable,p1\nAna,1,Tue,Mon 12:00\nBo,1,,Tue 12:00\n"
+    ), sched)
+    assert not errors
+    assert people[0].preferences == [S("Mon 12:00")] and len(people[0].unavailable) == 5
+    assert people[1].unavailable == set()
+
+
+def test_unavailable_slots_are_never_assigned():
+    # Only Mon 12:00 is left free for Fri-busy B, even though A ranked it first
+    sched = make_schedule({"Mon 12:00": 1, "Fri 12:00": 1})
+    a = P("A", 1, "Mon 12:00", "Fri 12:00")
+    b = P("B", 1)
+    b.unavailable = {S("Fri 12:00")}
+    res = run(sched, [a, b], Config(seed=0))
+    assert res.assignment == {"A": [S("Fri 12:00")], "B": [S("Mon 12:00")]}
+
+
+def test_validation_of_unavailable():
+    sched = make_schedule({"Mon 12:00": 2, "Mon 12:30": 1, "Mon 13:00": 1})
+    a = P("A", 2, "Mon 12:00", "Mon 12:30")
+    a.unavailable = {S("Mon 12:30"), S("Mon 13:00")}  # only Mon 12:00 left: 1 hour
+    b = P("B", 2, "Mon 12:00", "Mon 13:00")
+    b.unavailable = {S("Mon 12:00")}
+    errors, _ = validate(sched, [a, b], Config(min_list_factor=0))
+    text = "\n".join(errors)
+    assert "A: ranked slots also marked unavailable: Mon 12:30" in text
+    assert "A: only 1 non-overlapping hours fit" in text
+    assert "Mon 12:00 (1/2)" in text and "Mon 13:00 (1/1)" not in text

@@ -47,19 +47,34 @@ def main(n: int = 40, seed: int = 0) -> None:
         for t in TIMES:
             w.writerow([t, *(needed[d, t] for d in DAYS)])
 
+    def minutes(t):
+        hh, mm = t.split(":")
+        return int(hh) * 60 + int(mm)
+
     rows = []
     for k, h in enumerate(hours):
-        length = min(len(slots), rng.randint(2 * h, 3 * h + 2))
-        pool, prefs = list(slots), []
+        # about half the TAs have a class or two, a few have a whole day off
+        busy, blocked = [], set()
+        for _ in range(rng.choice([0, 0, 1, 1, 2])):
+            d, a = rng.choice(DAYS), rng.choice([12, 13, 14, 15, 16, 17]) * 60
+            busy.append(f"{d} {a // 60}:00-{(a + 90) // 60}:{(a + 90) % 60:02d}")
+            blocked |= {(d, t) for t in TIMES if minutes(t) < a + 90 and a < minutes(t) + 60}
+        if rng.random() < 0.1:
+            d = rng.choice(DAYS)
+            busy.append(d)
+            blocked |= {(d, t) for t in TIMES}
+
+        pool, prefs = [s for s in slots if s not in blocked], []
+        length = min(len(pool), rng.randint(2 * h, 3 * h + 2))
         for _ in range(length):  # weighted sampling without replacement
             pick = rng.choices(pool, weights=[popularity[s] for s in pool])[0]
             pool.remove(pick)
             prefs.append(f"{pick[0]} {pick[1]}")
-        rows.append([f"TA{k + 1:02d}", h, *prefs])
-    width = max(len(r) for r in rows) - 2
+        rows.append([f"TA{k + 1:02d}", h, "; ".join(busy), *prefs])
+    width = max(len(r) for r in rows) - 3
     with open(HERE / "preferences.csv", "w", newline="") as f:
         w = csv.writer(f)
-        w.writerow(["name", "hours", *(f"pref{i + 1}" for i in range(width))])
+        w.writerow(["name", "hours", "unavailable", *(f"pref{i + 1}" for i in range(width))])
         w.writerows(rows)
 
     with open(HERE / "grievances.csv", "w", newline="") as f:
